@@ -98,21 +98,19 @@ function cleanHtmlAndExtractText(html) {
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
+// Nueva función de extracción de JSON más robusta
 function extractJsonFromResponse(responseText) {
     try {
-        const jsonMatch = responseText.match(/```json\n([\s\S]*?)```/);
-        if (jsonMatch && jsonMatch[1]) {
-            return JSON.parse(jsonMatch[1]);
+        const startIndex = responseText.indexOf('[');
+        const endIndex = responseText.lastIndexOf(']');
+        
+        if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+            const jsonString = responseText.substring(startIndex, endIndex + 1);
+            return JSON.parse(jsonString);
         }
     } catch (e) {
     }
-    try {
-        const jsonMatch = responseText.match(/\[[\s\S]*?\]/);
-        if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
-        }
-    } catch (e) {
-    }
+
     try {
         return JSON.parse(responseText.trim());
     } catch (e) {
@@ -186,8 +184,7 @@ async function runScraper() {
         const artistsCollection = database.collection('artists');
         console.log("✅ Conectado a la base de datos.");
 
-        // Buscamos a 10 artistas a partir del número 50
-        const artistsToSearch = await artistsCollection.find({}).skip(50).limit(10).toArray(); 
+        const artistsToSearch = await artistsCollection.find({}).skip(10).limit(10).toArray(); 
         console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
 
         for (const artist of artistsToSearch) {
