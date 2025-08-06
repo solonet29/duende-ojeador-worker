@@ -10,11 +10,13 @@ const { JSDOM } = require('jsdom');
 const mongoUri = process.env.MONGO_URI;
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
-const groqApiKey = process.env.GROQ_API_KEY; 
+const groqApiKey = process.env.GROQ_API_KEY;
 
 if (!mongoUri || !googleApiKey || !googleCx || !groqApiKey) {
     throw new Error('Faltan variables de entorno críticas.');
 }
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const groq = new Groq({ apiKey: groqApiKey });
 
@@ -38,10 +40,10 @@ const aiPromptTemplate = (url, content) => `
     - Your response MUST be ONLY a JSON array, inside a markdown code block. Do NOT add any extra text, explanations, or comments before or after the code block.
 
     JSON Format Rules:
-    - `id` should be a unique slug like "antonio-reyes-madrid-2025-10-20".
-    - `date` must be "YYYY-MM-DD" format.
+    - id should be a unique slug like "antonio-reyes-madrid-2025-10-20".
+    - date must be "YYYY-MM-DD" format.
     - If the event is in Spain, try to fill the "provincia" field based on the "city" and "country".
-    - `sourceUrl` must be the provided URL.
+    - sourceUrl must be the provided URL.
 
     Example of the required JSON format:
     [
@@ -107,7 +109,7 @@ async function extractEventDataFromURL(url, retries = 3) {
         const chatCompletion = await groq.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
             model: "llama3-8b-8192",
-            temperature: 0, 
+            temperature: 0,
         });
 
         const text = chatCompletion.choices[0]?.message?.content || '';
@@ -135,6 +137,7 @@ async function extractEventDataFromURL(url, retries = 3) {
     } catch (error) {
         if (error.message.includes('429 Too Many Requests') && retries > 0) {
             console.warn(`      -> ⏳ ERROR 429: Límite de cuota de Groq excedido. Pausando 60 segundos y reintentando...`);
+            await delay(60000); 
             return extractEventDataFromURL(url, retries - 1);
         } else {
             console.error(`      -> ❌ Error al llamar a la API de Groq para la URL ${url}:`, error.message);
@@ -156,7 +159,6 @@ async function runScraper() {
         const artistsCollection = database.collection('artists');
         console.log("✅ Conectado a la base de datos.");
 
-        // Buscamos a todos los artistas sin límite
         const artistsToSearch = await artistsCollection.find({}).toArray(); 
         console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
 
