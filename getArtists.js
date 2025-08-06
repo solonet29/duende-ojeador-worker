@@ -3,25 +3,24 @@ const { MongoClient } = require('mongodb');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require("groq-sdk");
 
 // --- CONFIGURACIÓN ---
 const mongoUri = process.env.MONGO_URI;
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
-const geminiApiKey = process.env.GEMINI_API_KEY; // Tu clave de Gemini
+const groqApiKey = process.env.GROQ_API_KEY; 
 
-if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
+if (!mongoUri || !googleApiKey || !googleCx || !groqApiKey) {
     throw new Error('Faltan variables de entorno críticas.');
 }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-const genAI = new GoogleGenerativeAI(geminiApiKey);
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+const groq = new Groq({ apiKey: groqApiKey });
 
-const aiPromptTemplate = (url) => `
-    Actúa como mi asistente de investigación experto en flamenco, "El Duende". Tu única misión para hoy es encontrar eventos de flamenco en esta URL y devolverlos en un formato JSON específico.
+const aiPromptTemplate = (content) => `
+    Actúa como mi asistente de investigación experto en flamenco, "El Duende". Tu única misión es encontrar eventos de flamenco en el siguiente contenido HTML y devolverlos en un formato JSON específico.
 
     Foco de la Búsqueda:
     Busca conciertos, recitales y festivales de flamenco que ocurran en el futuro (después de hoy). No incluyas eventos del pasado.
@@ -49,7 +48,9 @@ const aiPromptTemplate = (url) => `
     Regla Anti-Duplicados: Si encuentras el mismo evento (mismos artistas, misma fecha y misma hora) en varias fuentes, incluye únicamente el que provenga de la fuente más fiable. Por ejemplo, un enlace a ticketmaster.es o al teatrodelamaestranza.com es más fiable que un enlace a un blog.
 
     Si no encuentras ningún evento nuevo, devuelve un array vacío [].
-    La URL a analizar es: ${url}
+    
+    Contenido a analizar:
+    ${content}
 `;
 
 /**
@@ -69,41 +70,54 @@ function isFutureEvent(dateString) {
     return eventDate >= today;
 }
 
-
-async function extractEventDataFromURL(url) {
-    console.log(`     -> 🤖 Llamando a la IA para analizar la URL: ${url}`);
+async function extractEventDataFromURL(url, retries = 3) {
+    console.log(`     -> 🤖 Llamando a la IA (Groq) para analizar la URL: ${url}`);
     
     try {
-        const prompt = aiPromptTemplate(url);
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
+        const pageResponse = await axios.get(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+            timeout: 10000 
+        });
+        const content = pageResponse.data;
+        
+        const prompt = aiPromptTemplate(content);
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [{ role: "user", content: prompt }],
+            model: "llama3-8b-8192", // Modelo de Groq
+            temperature: 0,
+        });
+
+        const text = chatCompletion.choices[0]?.message?.content || '';
 
         const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
         
         if (jsonMatch && jsonMatch[1]) {
             const jsonString = jsonMatch[1];
-            return JSON.parse(jsonString);
+            // Aquí añadimos la URL al JSON
+            const events = JSON.parse(jsonString);
+            if (Array.isArray(events)) {
+                return events.map(event => ({ ...event, sourceUrl: url }));
+            }
+            return [];
         } else {
             console.error('      -> ⚠️ La IA no devolvió un bloque JSON válido.');
             return [];
         }
     } catch (error) {
-        // Mejoramos el manejo del error 429
-        if (error.message.includes('429 Too Many Requests')) {
-            console.error(`      -> ❌ ERROR 429: Límite de cuota de Gemini excedido. Pausando...`);
-            // Retrasar y luego reintentar (opcional, por ahora solo pausamos)
-            // throw new Error('Cuota de Gemini excedida, se detiene el proceso.');
+        if (error.message.includes('429 Too Many Requests') && retries > 0) {
+            console.warn(`      -> ⏳ ERROR 429: Límite de cuota de Groq excedido. Pausando 60 segundos y reintentando...`);
+            await delay(60000); 
+            return extractEventDataFromURL(url, retries - 1);
         } else {
-            console.error(`      -> ❌ Error al llamar a la API de Gemini para la URL ${url}:`, error.message);
+            console.error(`      -> ❌ Error al llamar a la API de Groq para la URL ${url}:`, error.message);
+            return [];
         }
-        return [];
     }
 }
 
 
 async function runScraper() {
-    console.log("Iniciando ojeador con lógica de búsqueda y extractor con IA...");
+    console.log("Iniciando ojeador con lógica de búsqueda y extractor con IA (Groq)...");
     const client = new MongoClient(mongoUri);
     let allNewEvents = []; 
     let queryCount = 0;
@@ -152,12 +166,12 @@ async function runScraper() {
                     await delay(10000); 
                 }
             } catch (error) {
-                 if (error.response && error.response.status === 429) {
+                if (error.response && error.response.status === 429) {
                     console.error(`   -> ❌ ERROR 429: Cuota de Google excedida...`);
                     await delay(60000);
-                 } else {
+                } else {
                     console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
-                 }
+                }
             }
             await delay(1500); // Pausa entre artistas
         }
