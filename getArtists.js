@@ -52,6 +52,24 @@ const aiPromptTemplate = (url) => `
     La URL a analizar es: ${url}
 `;
 
+/**
+ * Filtra los eventos asegurándose de que la fecha sea igual o posterior a la fecha actual.
+ * @param {string} dateString La fecha del evento en formato 'YYYY-MM-DD'.
+ * @returns {boolean} Verdadero si el evento es futuro o de hoy, falso si es del pasado.
+ */
+function isFutureEvent(dateString) {
+    if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+        console.warn(`      -> ⚠️ Formato de fecha inválido '${dateString}'. Se descarta el evento.`);
+        return false;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const eventDate = new Date(dateString);
+    eventDate.setHours(0, 0, 0, 0);
+    return eventDate >= today;
+}
+
+
 async function extractEventDataFromURL(url) {
     console.log(`     -> 🤖 Llamando a la IA para analizar la URL: ${url}`);
     
@@ -61,7 +79,6 @@ async function extractEventDataFromURL(url) {
         const response = await result.response;
         const text = response.text();
 
-        // Extraer el bloque de código JSON del texto
         const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
         
         if (jsonMatch && jsonMatch[1]) {
@@ -114,10 +131,16 @@ async function runScraper() {
                     if (title.includes(artistNameLower) || snippet.includes(artistNameLower)) {
                         const eventsFromAI = await extractEventDataFromURL(result.link);
                         if (eventsFromAI && eventsFromAI.length > 0) {
-                            allNewEvents.push(...eventsFromAI);
+                            eventsFromAI.forEach(event => {
+                                if (isFutureEvent(event.date)) {
+                                    allNewEvents.push(event);
+                                } else {
+                                    console.log(`      -> ❌ Descartado: El evento '${event.name}' es del pasado.`);
+                                }
+                            });
                         }
                     }
-                    await delay(1000); // Pausa entre llamadas a la IA para evitar límites de tasa
+                    await delay(5000); // Pausa entre llamadas a la IA para evitar límites de tasa
                 }
             } catch (error) {
                  if (error.response && error.response.status === 429) {
