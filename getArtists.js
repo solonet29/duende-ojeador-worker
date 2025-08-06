@@ -4,13 +4,13 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const Groq = require("groq-sdk");
-const cheerio = require('cheerio'); // Usamos cheerio en lugar de jsdom
+const cheerio = require('cheerio'); // Usamos cheerio para limpiar HTML
 
 // --- CONFIGURACIÓN ---
 const mongoUri = process.env.MONGO_URI;
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
-const groqApiKey = process.env.GROQ_API_KEY; 
+const groqApiKey = process.env.GROQ_API_KEY;
 
 if (!mongoUri || !googleApiKey || !googleCx || !groqApiKey) {
     throw new Error('Faltan variables de entorno críticas.');
@@ -81,32 +81,31 @@ function isFutureEvent(dateString) {
     return eventDate >= today;
 }
 
-// Nueva función de limpieza de HTML con Cheerio
 function cleanHtmlAndExtractText(html) {
     const $ = cheerio.load(html);
-
     $('script, style, noscript, header, footer, nav, aside').remove();
-
     const text = $('body').text() || "";
     const cleanedText = text.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-    
     const MAX_LENGTH = 15000;
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
+// Nueva función de extracción de JSON más robusta
 function extractJsonFromResponse(responseText) {
     try {
-        const startIndex = responseText.indexOf('[');
-        const endIndex = responseText.lastIndexOf(']');
-        if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-            const jsonString = responseText.substring(startIndex, endIndex + 1);
+        const jsonMatch = responseText.match(/\[[\s\S]*?\]/);
+        if (jsonMatch) {
+            const jsonString = jsonMatch[0];
             return JSON.parse(jsonString);
         }
     } catch (e) {
+        // En caso de error, intenta un enfoque más simple
     }
+
     try {
         return JSON.parse(responseText.trim());
     } catch (e) {
+        // Si todo falla, devuelve un array vacío
         return [];
     }
 }
