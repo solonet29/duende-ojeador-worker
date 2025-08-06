@@ -3,22 +3,22 @@ const { MongoClient } = require('mongodb');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const Groq = require("groq-sdk");
-const cheerio = require('cheerio'); // Usamos cheerio para limpiar HTML
+const OpenAI = require('openai');
+const cheerio = require('cheerio');
 
 // --- CONFIGURACIÓN ---
 const mongoUri = process.env.MONGO_URI;
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
-const groqApiKey = process.env.GROQ_API_KEY;
+const openaiApiKey = process.env.OPENAI_API_KEY;
 
-if (!mongoUri || !googleApiKey || !googleCx || !groqApiKey) {
+if (!mongoUri || !googleApiKey || !googleCx || !openaiApiKey) {
     throw new Error('Faltan variables de entorno críticas.');
 }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-const groq = new Groq({ apiKey: groqApiKey });
+const openai = new OpenAI({ apiKey: openaiApiKey });
 
 const cityToProvinceMap = {
     'málaga': 'Málaga',
@@ -30,6 +30,7 @@ const cityToProvinceMap = {
     'jerez de la frontera': 'Cádiz',
     'cádiz': 'Cádiz',
     'valencia': 'Valencia',
+    'sotogrande': 'Cádiz',
 };
 
 const aiPromptTemplate = (url, content) => `
@@ -46,22 +47,22 @@ const aiPromptTemplate = (url, content) => `
     - sourceUrl: la URL original.
 
     Ejemplo del formato JSON requerido:
-    [
+    ${JSON.stringify([
         {
-            "id": "antonio-reyes-madrid-2025-10-20",
-            "name": "Concierto de Antonio Reyes",
-            "artist": "Antonio Reyes",
-            "description": "Recital de cante jondo.",
-            "date": "2025-10-20",
+            "id": "farruquito-trocadero-flamenco-festival-sotogrande-2025-08-15",
+            "name": "Trocadero Flamenco Festival",
+            "artist": "Farruquito",
+            "description": "Actuación de Farruquito en el Trocadero Flamenco Festival.",
+            "date": "2025-08-15",
             "time": "21:00",
-            "venue": "Teatro Real",
-            "city": "Madrid",
+            "venue": "Trocadero Flamenco Festival",
+            "city": "Sotogrande",
+            "provincia": "Cádiz",
             "country": "España",
-            "provincia": "Madrid",
             "verified": true,
-            "sourceUrl": "${url}"
-        }
-    ]
+            "sourceUrl": "https://farruquito.es/events/"
+          }
+    ], null, 2)}
 
     Si no se encuentra ningún evento, devuelve un array vacío [].
 
@@ -71,7 +72,6 @@ const aiPromptTemplate = (url, content) => `
 
 function isFutureEvent(dateString) {
     if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-        console.warn(`      -> ⚠️ Formato de fecha inválido '${dateString}'. Se descarta el evento.`);
         return false;
     }
     const today = new Date();
@@ -90,7 +90,6 @@ function cleanHtmlAndExtractText(html) {
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
-// Nueva función de extracción de JSON más robusta
 function extractJsonFromResponse(responseText) {
     try {
         const jsonMatch = responseText.match(/\[[\s\S]*?\]/);
@@ -99,19 +98,16 @@ function extractJsonFromResponse(responseText) {
             return JSON.parse(jsonString);
         }
     } catch (e) {
-        // En caso de error, intenta un enfoque más simple
     }
-
     try {
         return JSON.parse(responseText.trim());
     } catch (e) {
-        // Si todo falla, devuelve un array vacío
         return [];
     }
 }
 
 async function extractEventDataFromURL(url, retries = 3) {
-    console.log(`     -> 🤖 Llamando a la IA (Groq) para analizar la URL: ${url}`);
+    console.log(`     -> 🤖 Llamando a la IA (OpenAI) para analizar la URL: ${url}`);
     
     try {
         const pageResponse = await axios.get(url, {
@@ -122,9 +118,9 @@ async function extractEventDataFromURL(url, retries = 3) {
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         
         const prompt = aiPromptTemplate(url, cleanedContent);
-        const chatCompletion = await groq.chat.completions.create({
+        const chatCompletion = await openai.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
-            model: "llama3-8b-8192",
+            model: "gpt-4o",
             temperature: 0,
         });
 
@@ -146,12 +142,13 @@ async function extractEventDataFromURL(url, retries = 3) {
             return [];
         }
     } catch (error) {
-        if (error.message.includes('429 Too Many Requests') && retries > 0) {
-            console.warn(`      -> ⏳ ERROR 429: Límite de cuota de Groq excedido. Pausando 60 segundos y reintentando...`);
+        // El manejo de errores de OpenAI es diferente al de Groq
+        if (error.response && error.response.status === 429 && retries > 0) {
+            console.warn(`      -> ⏳ ERROR 429: Límite de cuota de OpenAI excedido. Pausando 60 segundos y reintentando...`);
             await delay(60000); 
             return extractEventDataFromURL(url, retries - 1);
         } else {
-            console.error(`      -> ❌ Error al llamar a la API de Groq para la URL ${url}:`, error.message);
+            console.error(`      -> ❌ Error al llamar a la API de OpenAI para la URL ${url}:`, error.message);
             return [];
         }
     }
@@ -159,7 +156,7 @@ async function extractEventDataFromURL(url, retries = 3) {
 
 
 async function runScraper() {
-    console.log("Iniciando ojeador con lógica de búsqueda y extractor con IA (Groq)...");
+    console.log("Iniciando ojeador con lógica de búsqueda y extractor con IA (OpenAI)...");
     const client = new MongoClient(mongoUri);
     let allNewEvents = []; 
     let queryCount = 0;
