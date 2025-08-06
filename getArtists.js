@@ -12,13 +12,13 @@ const googleCx = process.env.GOOGLE_CX;
 // const QUERY_LIMIT = 90; // Límite desactivado correctamente
 
 if (!mongoUri || !googleApiKey || !googleCx) {
-    throw new Error('Faltan variables de entorno críticas.');
+    throw new Error('Faltan variables de entorno críticas.');
 }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function runScraper() {
-    console.log("Iniciando ojeador con lógica de filtrado...");
+    console.log("Iniciando ojeador con lógica de filtrado y scraping Cheerio...");
     const client = new MongoClient(mongoUri);
     let allNewEvents = []; 
     let queryCount = 0;
@@ -39,11 +39,10 @@ async function runScraper() {
             
             try {
                 // =============================================================
-                // --- INICIO DE LA NUEVA LÓGICA INTELIGENTE ---
+                // --- INICIO DE LA NUEVA LÓGICA INTELIGENTE CON SCRAPING ---
                 // =============================================================
 
                 // 1. MEJORAMOS LA BÚSQUEDA
-                // Usamos comillas para buscar el nombre exacto y añadimos el año.
                 const searchQuery = `concierto flamenco "${artist.name}" 2025`;
                 const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleCx}&q=${encodeURIComponent(searchQuery)}`;
                 
@@ -52,7 +51,7 @@ async function runScraper() {
                 const searchResults = response.data.items || [];
                 console.log(` -> Encontrados ${searchResults.length} resultados en Google.`);
                 
-                const parsedEvents = []; // Cesta para los eventos limpios de ESTE artista
+                const parsedEvents = []; 
                 
                 // 2. CREAMOS EL FILTRO INTELIGENTE
                 const positiveKeywords = ['concierto', 'festival', 'actuación', 'gira', 'entradas', 'tickets', 'fecha'];
@@ -63,43 +62,89 @@ async function runScraper() {
                     const snippet = result.snippet.toLowerCase();
                     const artistNameLower = artist.name.toLowerCase();
 
-                    // Combinamos título y snippet para buscar
                     const textToSearch = title + " " + snippet;
 
-                    // A. ¿El resultado menciona a nuestro artista? (La prueba más importante)
                     if (!textToSearch.includes(artistNameLower)) {
-                        continue; // Si no lo menciona, saltamos al siguiente resultado.
+                        continue; 
                     }
 
-                    // B. ¿Contiene palabras positivas y no contiene palabras negativas?
                     const hasPositive = positiveKeywords.some(keyword => textToSearch.includes(keyword));
                     const hasNegative = negativeKeywords.some(keyword => textToSearch.includes(keyword));
 
                     if (hasPositive && !hasNegative) {
-                        // ¡PARECE UN BUEN CANDIDATO!
                         console.log(`   -> Candidato encontrado: "${result.title}"`);
+                        console.log(`   -> Scrapeando detalles de: ${result.link}`);
 
-                        // 3. CONSTRUIMOS UN EVENTO BÁSICO
-                        // Aquí intentamos extraer la información básica. 
-                        // Esto es un primer paso, se puede hacer mucho más complejo y preciso.
-                        const newEvent = {
-                            id: `evt-${artist.id}-${queryCount}-${parsedEvents.length}`, // ID temporal
-                            name: result.title, // Usamos el título del resultado como nombre
-                            description: result.snippet, // Y el snippet como descripción
-                            date: '2025-01-01', // Fecha por defecto (necesitaríamos lógica más avanzada para extraerla)
-                            time: '21:00', // Hora por defecto
-                            verified: false, // No está verificado porque es un scraping automático
+                        let eventData = {
+                            id: `evt-${artist._id}-${queryCount}-${parsedEvents.length}`, 
+                            name: result.title, 
+                            description: result.snippet, 
+                            date: null,
+                            time: null,
+                            venue: null,
+                            city: null,
+                            verified: false,
                             sourceUrl: result.link,
                             artist: artist.name,
-                            // Los campos de sala, ciudad, etc. requerirían visitar el link con Cheerio
                         };
+
+                        try {
+                            const pageResponse = await axios.get(result.link, {
+                                headers: {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                                },
+                                timeout: 10000 // Aumentamos el timeout a 10 segundos
+                            });
+                            const $ = cheerio.load(pageResponse.data);
+
+                            // --- LÓGICA DE SCRAPING CON CHEERIO ---
+                            // Aquí es donde necesitamos tu ayuda para definir los selectores
+                            // Ejemplo (debes adaptarlo a los sitios web reales):
+                            // Para la fecha:
+                            // const dateText = $('span.date-display-single').text();
+                            // eventData.date = dateText ? dateText.trim() : null;
+
+                            // Para el lugar:
+                            // const venueText = $('.event-venue a').text();
+                            // eventData.venue = venueText ? venueText.trim() : null;
+
+                            // NOTA IMPORTANTE: Esta es una parte crítica. Los selectores CSS
+                            // cambian de un sitio a otro. Para que funcione bien, necesitarás
+                            // inspeccionar manualmente los sitios web que encuentres y definir
+                            // los selectores correctos para cada uno.
+
+                            // De momento, dejaremos los campos vacíos, pero aquí iría la lógica
+                            // para llenar eventData.date, eventData.venue, etc.
+
+                            // Ejemplo básico y general, que probablemente no funcione para todos los sitios:
+                            // $('time, .date, .event-date').each((i, elem) => {
+                            //     const text = $(elem).text().trim();
+                            //     if (text) {
+                            //         eventData.date = text;
+                            //         return false; // Salimos del each después de encontrar el primero
+                            //     }
+                            // });
+
+                            // Si conseguimos rascar algún dato más allá de la búsqueda
+                            if (eventData.date || eventData.venue) {
+                                parsedEvents.push(eventData);
+                            } else {
+                                // Si no encontramos datos con Cheerio, al menos guardamos el evento básico
+                                // para una revisión manual.
+                                parsedEvents.push(eventData);
+                            }
+
+                        } catch (scrapeError) {
+                            console.error(`     -> ⚠️ Error al scrapear ${result.link}:`, scrapeError.message);
+                            // Si el scraping falla, guardamos el evento básico de todas formas.
+                            parsedEvents.push(eventData);
+                        }
                         
-                        parsedEvents.push(newEvent);
                     }
                 }
                 
                 // =============================================================
-                // --- FIN DE LA NUEVA LÓGICA INTELIGENTE ---
+                // --- FIN DE LA NUEVA LÓGICA INTELIGENTE CON SCRAPING ---
                 // =============================================================
 
                 if (parsedEvents.length > 0) {
@@ -115,7 +160,7 @@ async function runScraper() {
                     console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
                  }
             }
-            await delay(1500);
+            await delay(1500); // Pausa entre artistas
         }
 
         console.log(`-------------------------------------------`);
