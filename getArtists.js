@@ -55,7 +55,7 @@ const formatPromptTemplate = (url, textToFormat) => `
     - date: in format "YYYY-MM-DD".
     - If the event is in Spain, try to fill the "provincia" field based on the "city" and "country".
     - sourceUrl: the original URL.
-    
+
     Example of the required JSON format:
     ${JSON.stringify([
         {
@@ -70,7 +70,7 @@ const formatPromptTemplate = (url, textToFormat) => `
             "provincia": "Cádiz",
             "country": "España",
             "verified": true,
-            "sourceUrl": "https://farruquito.es/events/"
+            "sourceUrl": "[https://farruquito.es/events/](https://farruquito.es/events/)"
           }
     ], null, 2)}
     
@@ -100,6 +100,14 @@ function cleanHtmlAndExtractText(html) {
 
 function extractJsonFromResponse(responseText) {
     try {
+        // Expresión regular para encontrar el bloque de código de Markdown y el JSON
+        const markdownJsonMatch = responseText.match(/```(?:json)?\n([\s\S]*?)```/);
+        if (markdownJsonMatch && markdownJsonMatch[1]) {
+            return JSON.parse(markdownJsonMatch[1]);
+        }
+    } catch (e) {
+    }
+    try {
         const jsonMatch = responseText.match(/\[[\s\S]*?\]/);
         if (jsonMatch) {
             const jsonString = jsonMatch[0];
@@ -125,7 +133,6 @@ async function extractEventDataFromURL(url, retries = 3) {
         
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         
-        // Paso 1: Extracción de texto simple
         const rawResponse = await openai.chat.completions.create({
             messages: [{ role: "user", content: extractionPromptTemplate(url, cleanedContent) }],
             model: "gpt-4o",
@@ -133,7 +140,6 @@ async function extractEventDataFromURL(url, retries = 3) {
         });
         const extractedText = rawResponse.choices[0]?.message?.content || '';
 
-        // Paso 2: Formatear el texto en JSON
         const formatResponse = await openai.chat.completions.create({
             messages: [{ role: "user", content: formatPromptTemplate(url, extractedText) }],
             model: "gpt-4o",
@@ -154,6 +160,7 @@ async function extractEventDataFromURL(url, retries = 3) {
             });
         } else {
             console.error('      -> ⚠️ La IA no devolvió un bloque JSON válido.');
+            console.log('      -> Respuesta cruda de la IA:', jsonText);
             return [];
         }
     } catch (error) {
