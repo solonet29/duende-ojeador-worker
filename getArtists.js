@@ -98,36 +98,36 @@ async function runScraper() {
                             const $ = cheerio.load(pageResponse.data);
 
                             // --- LÓGICA DE SCRAPING CON CHEERIO ---
-                            const sourceUrl = result.link;
+const sourceUrl = result.link;
 
-                            // Condición para aplicar selectores específicos solo a esta web
-                            if (sourceUrl.includes('juntadeandalucia.es')) {
-                                // Extraer la fecha
-                                const dateElement = $('div.text_base').eq(0);
-                                const dateText = dateElement.text().trim();
-                                if (dateText) {
-                                    // El texto es "12 de Septiembre del 2025", lo guardamos así por ahora
-                                    eventData.date = dateText;
-                                }
+// Condición para aplicar selectores específicos solo a esta web
+if (sourceUrl.includes('juntadeandalucia.es')) {
+    // Extraer el lugar y la ciudad
+    const locationElement = $('a.text_accent_text_base');
+    const locationText = locationElement.text().trim();
+    if (locationText) {
+        const parts = locationText.split(',');
+        eventData.city = parts[parts.length - 2] ? parts[parts.length - 2].trim() : null;
+        eventData.venue = locationText; 
+    }
 
-                                // Extraer la hora
-                                const timeElement = $('div.text_base').eq(1);
-                                const timeText = timeElement.text().trim();
-                                if (timeText) {
-                                    eventData.time = timeText.replace('horas.', '').trim();
-                                }
+    // Extraer la fecha
+    // Hay varios div.text_base. El que contiene la fecha es el segundo (índice 1)
+    const dateElement = $('div.text_base').eq(1); 
+    const dateText = dateElement.text().trim();
+    if (dateText) {
+        eventData.date = dateText;
+    }
 
-                                // Extraer el lugar y la ciudad
-                                const locationElement = $('a.text_accent_text_base');
-                                const locationText = locationElement.text().trim();
-                                if (locationText) {
-                                    const parts = locationText.split(',');
-                                    // La ciudad suele ser el penúltimo elemento
-                                    eventData.city = parts[parts.length - 2] ? parts[parts.length - 2].trim() : null;
-                                    eventData.venue = locationText; // Guardamos la dirección completa como el lugar por ahora
-                                }
-                            }
-                            // --- FIN DE LA LÓGICA ESPECÍFICA ---
+    // Extraer la hora
+    // El div.text_base para la hora es el tercero (índice 2)
+    const timeElement = $('div.text_base').eq(2); 
+    const timeText = timeElement.text().trim();
+    if (timeText) {
+        eventData.time = timeText.replace('horas.', '').trim();
+    }
+}
+// --- FIN DE LA LÓGICA ESPECÍFICA ---
                             
                             // Si conseguimos rascar algún dato más allá de la búsqueda
                             if (eventData.date || eventData.venue) {
