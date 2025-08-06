@@ -89,7 +89,14 @@ async function extractEventDataFromURL(url) {
             return [];
         }
     } catch (error) {
-        console.error(`      -> ❌ Error al llamar a la API de Gemini para la URL ${url}:`, error.message);
+        // Mejoramos el manejo del error 429
+        if (error.message.includes('429 Too Many Requests')) {
+            console.error(`      -> ❌ ERROR 429: Límite de cuota de Gemini excedido. Pausando...`);
+            // Retrasar y luego reintentar (opcional, por ahora solo pausamos)
+            // throw new Error('Cuota de Gemini excedida, se detiene el proceso.');
+        } else {
+            console.error(`      -> ❌ Error al llamar a la API de Gemini para la URL ${url}:`, error.message);
+        }
         return [];
     }
 }
@@ -140,7 +147,9 @@ async function runScraper() {
                             });
                         }
                     }
-                    await delay(5000); // Pausa entre llamadas a la IA para evitar límites de tasa
+                    // Pausa de 10 segundos entre cada llamada a la IA
+                    console.log('      -> Pausando 10 segundos para respetar la cuota de la API...');
+                    await delay(10000); 
                 }
             } catch (error) {
                  if (error.response && error.response.status === 429) {
