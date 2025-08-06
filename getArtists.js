@@ -98,49 +98,68 @@ async function runScraper() {
                             const $ = cheerio.load(pageResponse.data);
 
                             // --- LÓGICA DE SCRAPING CON CHEERIO ---
-const sourceUrl = result.link;
+                            const sourceUrl = result.link;
 
-// Condición para aplicar selectores específicos solo a esta web
-if (sourceUrl.includes('juntadeandalucia.es')) {
-    // Extraer el lugar y la ciudad
-    const locationElement = $('a.text_accent_text_base');
-    const locationText = locationElement.text().trim();
-    if (locationText) {
-        const parts = locationText.split(',');
-        eventData.city = parts[parts.length - 2] ? parts[parts.length - 2].trim() : null;
-        eventData.venue = locationText; 
-    }
+                            // Lógica para la web de la Junta de Andalucía
+                            if (sourceUrl.includes('juntadeandalucia.es')) {
+                                const locationElement = $('a.text_accent_text_base');
+                                const locationText = locationElement.text().trim();
+                                if (locationText) {
+                                    const parts = locationText.split(',');
+                                    eventData.city = parts[parts.length - 2] ? parts[parts.length - 2].trim() : null;
+                                    eventData.venue = locationText; 
+                                }
 
-    // Extraer la fecha
-    // Hay varios div.text_base. El que contiene la fecha es el segundo (índice 1)
-    const dateElement = $('div.text_base').eq(1); 
-    const dateText = dateElement.text().trim();
-    if (dateText) {
-        eventData.date = dateText;
-    }
+                                const dateElement = $('div.text_base').eq(1); 
+                                const dateText = dateElement.text().trim();
+                                if (dateText) {
+                                    eventData.date = dateText;
+                                }
 
-    // Extraer la hora
-    // El div.text_base para la hora es el tercero (índice 2)
-    const timeElement = $('div.text_base').eq(2); 
-    const timeText = timeElement.text().trim();
-    if (timeText) {
-        eventData.time = timeText.replace('horas.', '').trim();
-    }
-}
-// --- FIN DE LA LÓGICA ESPECÍFICA ---
+                                const timeElement = $('div.text_base').eq(2); 
+                                const timeText = timeElement.text().trim();
+                                if (timeText) {
+                                    eventData.time = timeText.replace('horas.', '').trim();
+                                }
+                            }
+                            // Lógica para la web de El Corte Inglés
+                            else if (sourceUrl.includes('elcorteingles.es')) {
+                                const nameText = $('h1.product-header__main-title').text().trim();
+                                if (nameText) {
+                                    eventData.name = nameText;
+                                }
                             
-                            // Si conseguimos rascar algún dato más allá de la búsqueda
+                                const items = $('p.product-header__bottom_item-text');
+                                items.each((i, elem) => {
+                                    const text = $(elem).text().trim();
+                                    if (text.startsWith('Fechas:')) {
+                                        eventData.date = text.replace('Fechas:', '').trim();
+                                    } else if (text.startsWith('Horario:')) {
+                                        eventData.time = text.replace('Horario:', '').trim();
+                                    }
+                                });
+                            
+                                const venueText = $('p.product-header__link a').text().trim();
+                                if (venueText) {
+                                    eventData.venue = venueText;
+                                }
+                            
+                                const title = $('title').text();
+                                const cityMatch = title.match(/ en ([^|]+)/i);
+                                if (cityMatch && cityMatch.length > 1) {
+                                    eventData.city = cityMatch[1].trim();
+                                }
+                            }
+                            // --- FIN DE LA LÓGICA ESPECÍFICA ---
+                            
                             if (eventData.date || eventData.venue) {
                                 parsedEvents.push(eventData);
                             } else {
-                                // Si no encontramos datos con Cheerio, al menos guardamos el evento básico
-                                // para una revisión manual.
                                 parsedEvents.push(eventData);
                             }
 
                         } catch (scrapeError) {
                             console.error(`     -> ⚠️ Error al scrapear ${result.link}:`, scrapeError.message);
-                            // Si el scraping falla, guardamos el evento básico de todas formas.
                             parsedEvents.push(eventData);
                         }
                         
