@@ -20,34 +20,35 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const groq = new Groq({ apiKey: groqApiKey });
 
+// Nuevo prompt en inglés, más directo y estricto
 const aiPromptTemplate = (url, content) => `
-    You are an expert flamenco researcher. Your only mission is to find flamenco events in the provided text and return them in a specific JSON format.
+    You are a data extraction bot. Your task is to find flamenco events in the provided text and return a JSON array.
 
     - The content is from the URL: ${url}.
     - Find concerts, recitals, and festivals for the future. Do NOT include past events.
-    - Your response must be ONLY a JSON array, inside a markdown code block. Do not add any extra text, explanations, or comments.
-    
-    JSON Format:
+    - Your response MUST be ONLY a JSON array, inside a markdown code block. Do NOT add any extra text, explanations, or comments before or after the code block.
+
+    Example of the required JSON format:
     [
         {
-            "id": "unique slug for the event",
-            "name": "string",
-            "artist": "string",
-            "description": "string",
-            "date": "string (YYYY-MM-DD)",
-            "time": "string (HH:MM)",
-            "venue": "string",
-            "city": "string",
-            "country": "string",
-            "provincia": "string",
-            "verified": "boolean",
-            "sourceUrl": "string"
+            "id": "antonio-reyes-madrid-2025-10-20",
+            "name": "Concierto de Antonio Reyes",
+            "artist": "Antonio Reyes",
+            "description": "Recital de cante jondo.",
+            "date": "2025-10-20",
+            "time": "21:00",
+            "venue": "Teatro Real",
+            "city": "Madrid",
+            "country": "Spain",
+            "provincia": "Madrid",
+            "verified": true,
+            "sourceUrl": "${url}"
         }
     ]
 
     If no events are found, return an empty array [].
 
-    Content to analyze:
+    Text to analyze:
     ${content}
 `;
 
@@ -82,7 +83,7 @@ function cleanHtmlAndExtractText(html) {
     const text = document.body.textContent || "";
     const cleanedText = text.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
     
-    const MAX_LENGTH = 15000; // Aumentamos el límite para dar más contexto
+    const MAX_LENGTH = 15000;
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
@@ -101,7 +102,7 @@ async function extractEventDataFromURL(url, retries = 3) {
         const chatCompletion = await groq.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
             model: "llama3-8b-8192",
-            temperature: 0,
+            temperature: 0, // Un valor de 0 hace que la IA sea menos creativa y más estricta con el formato.
         });
 
         const text = chatCompletion.choices[0]?.message?.content || '';
@@ -117,6 +118,7 @@ async function extractEventDataFromURL(url, retries = 3) {
             return [];
         } else {
             console.error('      -> ⚠️ La IA no devolvió un bloque JSON válido.');
+            console.log('      -> Respuesta de la IA:', text); // Para depurar, imprimimos la respuesta completa.
             return [];
         }
     } catch (error) {
