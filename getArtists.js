@@ -4,7 +4,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const Groq = require("groq-sdk");
-const { JSDOM } = require('jsdom'); // Nueva librería
+const { JSDOM } = require('jsdom');
 
 // --- CONFIGURACIÓN ---
 const mongoUri = process.env.MONGO_URI;
@@ -20,18 +20,17 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const groq = new Groq({ apiKey: groqApiKey });
 
-const aiPromptTemplate = (content) => `
-    Actúa como mi asistente de investigación experto en flamenco, "El Duende". Tu única misión es encontrar eventos de flamenco en el siguiente contenido de texto y devolverlos en un formato JSON específico.
+const aiPromptTemplate = (url, content) => `
+    You are an expert flamenco researcher. Your only mission is to find flamenco events in the provided text and return them in a specific JSON format.
 
-    Foco de la Búsqueda:
-    Busca conciertos, recitales y festivales de flamenco que ocurran en el futuro (después de hoy). No incluyas eventos del pasado.
-
-    Reglas de Formato y Procesamiento (MUY IMPORTANTE):
-    Tu respuesta debe ser únicamente un bloque de código JSON dentro de un bloque de markdown. No incluyas ningún otro texto.
-    El formato de cada evento en el array JSON debe ser exactamente este:
+    - The content is from the URL: ${url}.
+    - Find concerts, recitals, and festivals for the future. Do NOT include past events.
+    - Your response must be ONLY a JSON array, inside a markdown code block. Do not add any extra text, explanations, or comments.
+    
+    JSON Format:
     [
         {
-            "id": "string",
+            "id": "unique slug for the event",
             "name": "string",
             "artist": "string",
             "description": "string",
@@ -46,11 +45,9 @@ const aiPromptTemplate = (content) => `
         }
     ]
 
-    Regla Anti-Duplicados: Si encuentras el mismo evento (mismos artistas, misma fecha y misma hora) en varias fuentes, incluye únicamente el que provenga de la fuente más fiable. Por ejemplo, un enlace a ticketmaster.es o al teatrodelamaestranza.com es más fiable que un enlace a un blog.
+    If no events are found, return an empty array [].
 
-    Si no encuentras ningún evento nuevo, devuelve un array vacío [].
-    
-    Contenido a analizar:
+    Content to analyze:
     ${content}
 `;
 
@@ -80,15 +77,12 @@ function cleanHtmlAndExtractText(html) {
     const dom = new JSDOM(html);
     const document = dom.window.document;
 
-    // Eliminar scripts y estilos para reducir el tamaño
-    document.querySelectorAll('script, style, noscript, header, footer, nav, aside').forEach(el => el.remove());
+    document.querySelectorAll('script, style, noscript').forEach(el => el.remove());
 
     const text = document.body.textContent || "";
-    // Reemplazar múltiples saltos de línea y espacios con uno solo
     const cleanedText = text.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
     
-    // Acortar el texto a un tamaño razonable para el modelo (aprox. 10,000 caracteres)
-    const MAX_LENGTH = 10000;
+    const MAX_LENGTH = 15000; // Aumentamos el límite para dar más contexto
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
@@ -101,10 +95,9 @@ async function extractEventDataFromURL(url, retries = 3) {
             timeout: 10000 
         });
         
-        // Limpiamos y acortamos el HTML antes de enviarlo a la IA
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         
-        const prompt = aiPromptTemplate(cleanedContent);
+        const prompt = aiPromptTemplate(url, cleanedContent);
         const chatCompletion = await groq.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
             model: "llama3-8b-8192",
