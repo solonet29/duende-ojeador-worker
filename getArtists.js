@@ -3,72 +3,78 @@ const { MongoClient } = require('mongodb');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // --- CONFIGURACIÓN ---
 const mongoUri = process.env.MONGO_URI;
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
+const geminiApiKey = process.env.GEMINI_API_KEY; // Tu clave de Gemini
 
-if (!mongoUri || !googleApiKey || !googleCx) {
-    throw new Error('Faltan variables de entorno críticas.');
+if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
+    throw new Error('Faltan variables de entorno críticas.');
 }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// Aquí definiremos tu prompt experto en flamenco.
+const genAI = new GoogleGenerativeAI(geminiApiKey);
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
 const aiPromptTemplate = (url) => `
     Actúa como mi asistente de investigación experto en flamenco, "El Duende". Tu única misión para hoy es encontrar eventos de flamenco en esta URL y devolverlos en un formato JSON específico.
 
     Foco de la Búsqueda:
-    Busca nuevos conciertos, recitales y festivales de flamenco.
+    Busca conciertos, recitales y festivales de flamenco que ocurran en el futuro (después de hoy). No incluyas eventos del pasado.
 
     Reglas de Formato y Procesamiento (MUY IMPORTANTE):
     Tu respuesta debe ser únicamente un bloque de código JSON dentro de un bloque de markdown. No incluyas ningún otro texto.
     El formato de cada evento en el array JSON debe ser exactamente este:
-    {
-        "id": "Un identificador único (usa el artista, ciudad y fecha en formato slug)",
-        "name": "El nombre oficial del espectáculo.",
-        "artist": "El artista o artistas principales.",
-        "description": "Una breve descripción del evento.",
-        "date": "La fecha en formato YYYY-MM-DD.",
-        "time": "La hora en formato HH:MM.",
-        "venue": "El nombre del lugar.",
-        "city": "La ciudad.",
-        "country": "El país.",
-        "provincia": "La provincia",
-        "verified": "true si la fuente es fiable (web oficial, vendedor de entradas), false si es un blog o foro.",
-        "sourceUrl": "${url}"
-    }
+    [
+        {
+            "id": "string",
+            "name": "string",
+            "artist": "string",
+            "description": "string",
+            "date": "string (YYYY-MM-DD)",
+            "time": "string (HH:MM)",
+            "venue": "string",
+            "city": "string",
+            "country": "string",
+            "provincia": "string",
+            "verified": "boolean",
+            "sourceUrl": "string"
+        }
+    ]
 
     Regla Anti-Duplicados: Si encuentras el mismo evento (mismos artistas, misma fecha y misma hora) en varias fuentes, incluye únicamente el que provenga de la fuente más fiable. Por ejemplo, un enlace a ticketmaster.es o al teatrodelamaestranza.com es más fiable que un enlace a un blog.
 
     Si no encuentras ningún evento nuevo, devuelve un array vacío [].
+    La URL a analizar es: ${url}
 `;
 
-// Esta función es un placeholder para la futura integración con la API de IA.
 async function extractEventDataFromURL(url) {
     console.log(`     -> 🤖 Llamando a la IA para analizar la URL: ${url}`);
     
-    // TODO: Aquí irá el código real para llamar a la API de Gemini, GPT-4, etc.
-    // Usaremos el prompt aiPromptTemplate(url) para hacer la petición.
-    // Por ahora, devolveremos un evento ficticio para no romper el flujo.
-    
-    return [
-        {
-            id: 'evt-ai-test-1',
-            name: 'Evento de prueba por IA',
-            artist: 'Antonio Reyes',
-            description: 'Este evento fue extraído con éxito por la IA.',
-            date: '2025-10-20',
-            time: '21:00',
-            venue: 'Teatro de Prueba',
-            city: 'Madrid',
-            country: 'España',
-            provincia: 'Madrid',
-            verified: true,
-            sourceUrl: url
+    try {
+        const prompt = aiPromptTemplate(url);
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+
+        // Extraer el bloque de código JSON del texto
+        const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
+        
+        if (jsonMatch && jsonMatch[1]) {
+            const jsonString = jsonMatch[1];
+            return JSON.parse(jsonString);
+        } else {
+            console.error('      -> ⚠️ La IA no devolvió un bloque JSON válido.');
+            return [];
         }
-    ];
+    } catch (error) {
+        console.error(`      -> ❌ Error al llamar a la API de Gemini para la URL ${url}:`, error.message);
+        return [];
+    }
 }
 
 
@@ -100,29 +106,19 @@ async function runScraper() {
                 const searchResults = response.data.items || [];
                 console.log(` -> Encontrados ${searchResults.length} resultados en Google.`);
                 
-                const parsedEvents = []; 
-                
                 for (const result of searchResults) {
                     const title = result.title.toLowerCase();
                     const snippet = result.snippet.toLowerCase();
                     const artistNameLower = artist.name.toLowerCase();
 
-                    const textToSearch = title + " " + snippet;
-
-                    if (textToSearch.includes(artistNameLower)) {
-                        // Aquí llamamos a la nueva función de extracción con IA
+                    if (title.includes(artistNameLower) || snippet.includes(artistNameLower)) {
                         const eventsFromAI = await extractEventDataFromURL(result.link);
                         if (eventsFromAI && eventsFromAI.length > 0) {
-                            parsedEvents.push(...eventsFromAI);
+                            allNewEvents.push(...eventsFromAI);
                         }
                     }
+                    await delay(1000); // Pausa entre llamadas a la IA para evitar límites de tasa
                 }
-                
-                if (parsedEvents.length > 0) {
-                    console.log(` -> ¡Éxito! Se han parseado ${parsedEvents.length} eventos nuevos para este artista.`);
-                    allNewEvents.push(...parsedEvents);
-                }
-
             } catch (error) {
                  if (error.response && error.response.status === 429) {
                     console.error(`   -> ❌ ERROR 429: Cuota de Google excedida...`);
@@ -131,7 +127,7 @@ async function runScraper() {
                     console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
                  }
             }
-            await delay(1500);
+            await delay(1500); // Pausa entre artistas
         }
 
         console.log(`-------------------------------------------`);
