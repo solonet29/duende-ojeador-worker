@@ -4,6 +4,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const Groq = require("groq-sdk");
+const { JSDOM } = require('jsdom'); // Nueva librería
 
 // --- CONFIGURACIÓN ---
 const mongoUri = process.env.MONGO_URI;
@@ -20,7 +21,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const groq = new Groq({ apiKey: groqApiKey });
 
 const aiPromptTemplate = (content) => `
-    Actúa como mi asistente de investigación experto en flamenco, "El Duende". Tu única misión es encontrar eventos de flamenco en el siguiente contenido HTML y devolverlos en un formato JSON específico.
+    Actúa como mi asistente de investigación experto en flamenco, "El Duende". Tu única misión es encontrar eventos de flamenco en el siguiente contenido de texto y devolverlos en un formato JSON específico.
 
     Foco de la Búsqueda:
     Busca conciertos, recitales y festivales de flamenco que ocurran en el futuro (después de hoy). No incluyas eventos del pasado.
@@ -70,6 +71,27 @@ function isFutureEvent(dateString) {
     return eventDate >= today;
 }
 
+/**
+ * Limpia y extrae el texto de un documento HTML, eliminando scripts, estilos y otros elementos no esenciales.
+ * @param {string} html El contenido HTML completo de la página.
+ * @returns {string} El texto limpio y acortado, listo para ser enviado a la IA.
+ */
+function cleanHtmlAndExtractText(html) {
+    const dom = new JSDOM(html);
+    const document = dom.window.document;
+
+    // Eliminar scripts y estilos para reducir el tamaño
+    document.querySelectorAll('script, style, noscript, header, footer, nav, aside').forEach(el => el.remove());
+
+    const text = document.body.textContent || "";
+    // Reemplazar múltiples saltos de línea y espacios con uno solo
+    const cleanedText = text.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+    
+    // Acortar el texto a un tamaño razonable para el modelo (aprox. 10,000 caracteres)
+    const MAX_LENGTH = 10000;
+    return cleanedText.substring(0, MAX_LENGTH);
+}
+
 async function extractEventDataFromURL(url, retries = 3) {
     console.log(`     -> 🤖 Llamando a la IA (Groq) para analizar la URL: ${url}`);
     
@@ -78,12 +100,14 @@ async function extractEventDataFromURL(url, retries = 3) {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
             timeout: 10000 
         });
-        const content = pageResponse.data;
         
-        const prompt = aiPromptTemplate(content);
+        // Limpiamos y acortamos el HTML antes de enviarlo a la IA
+        const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
+        
+        const prompt = aiPromptTemplate(cleanedContent);
         const chatCompletion = await groq.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
-            model: "llama3-8b-8192", // Modelo de Groq
+            model: "llama3-8b-8192",
             temperature: 0,
         });
 
@@ -93,7 +117,6 @@ async function extractEventDataFromURL(url, retries = 3) {
         
         if (jsonMatch && jsonMatch[1]) {
             const jsonString = jsonMatch[1];
-            // Aquí añadimos la URL al JSON
             const events = JSON.parse(jsonString);
             if (Array.isArray(events)) {
                 return events.map(event => ({ ...event, sourceUrl: url }));
@@ -161,7 +184,6 @@ async function runScraper() {
                             });
                         }
                     }
-                    // Pausa de 10 segundos entre cada llamada a la IA
                     console.log('      -> Pausando 10 segundos para respetar la cuota de la API...');
                     await delay(10000); 
                 }
@@ -173,7 +195,7 @@ async function runScraper() {
                     console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
                 }
             }
-            await delay(1500); // Pausa entre artistas
+            await delay(1500);
         }
 
         console.log(`-------------------------------------------`);
