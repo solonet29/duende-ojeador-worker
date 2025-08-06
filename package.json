@@ -1,21 +1,18 @@
 {
   "name": "duende-ojeador-worker",
   "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "description": "",
+  "main": "getArtists.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node getArtists.js"
+  },
   "dependencies": {
-    "@google-cloud/vision": "^5.3.3",
-    "@google/generative-ai": "^0.24.1",
-    "axios": "^1.11.0",
-    "cheerio": "^1.1.2",
-    "dotenv": "^17.2.1",
-    "groq": "^4.3.0",
-    "mongodb": "^6.18.0"
+    "@google/generative-ai": "^0.15.0",
+    "axios": "^1.7.2",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.4.5",
+    "groq-sdk": "^0.3.2",
+    "mongodb": "^6.8.0"
   }
 }
