@@ -10,7 +10,7 @@ const { JSDOM } = require('jsdom');
 const mongoUri = process.env.MONGO_URI;
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
-const groqApiKey = process.env.GROQ_API_KEY;
+const groqApiKey = process.env.GROQ_API_KEY; 
 
 if (!mongoUri || !googleApiKey || !googleCx || !groqApiKey) {
     throw new Error('Faltan variables de entorno críticas.');
@@ -37,7 +37,7 @@ const aiPromptTemplate = (url, content) => `
 
     - The content is from the URL: ${url}.
     - Find concerts, recitals, and festivals for the future. Do NOT include past events.
-    - Your response MUST be ONLY a JSON array, inside a markdown code block. Do NOT add any extra text, explanations, or comments before or after the code block.
+    - Your response MUST be ONLY a JSON array. Do NOT add any extra text, explanations, or comments before or after the JSON.
 
     JSON Format Rules:
     - id should be a unique slug like "antonio-reyes-madrid-2025-10-20".
@@ -94,6 +94,33 @@ function cleanHtmlAndExtractText(html) {
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
+/**
+ * Busca y extrae el primer bloque JSON válido de una cadena de texto.
+ * @param {string} responseText La respuesta completa de la API de IA.
+ * @returns {Array} El objeto JSON parseado o un array vacío si falla.
+ */
+function extractJsonFromResponse(responseText) {
+    try {
+        // Buscar el primer carácter '[' y el último ']' para aislar el array JSON
+        const startIndex = responseText.indexOf('[');
+        const endIndex = responseText.lastIndexOf(']');
+
+        if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+            const jsonString = responseText.substring(startIndex, endIndex + 1);
+            return JSON.parse(jsonString);
+        }
+    } catch (e) {
+        // En caso de error de parseo, se intentará una segunda técnica
+    }
+
+    try {
+        // Si la primera técnica falla, intenta parsear todo el texto
+        return JSON.parse(responseText.trim());
+    } catch (e) {
+        return [];
+    }
+}
+
 async function extractEventDataFromURL(url, retries = 3) {
     console.log(`     -> 🤖 Llamando a la IA (Groq) para analizar la URL: ${url}`);
     
@@ -114,22 +141,18 @@ async function extractEventDataFromURL(url, retries = 3) {
 
         const text = chatCompletion.choices[0]?.message?.content || '';
 
-        const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
+        // Usamos la nueva función para extraer el JSON de forma robusta
+        const events = extractJsonFromResponse(text);
         
-        if (jsonMatch && jsonMatch[1]) {
-            const jsonString = jsonMatch[1];
-            const events = JSON.parse(jsonString);
-            if (Array.isArray(events)) {
-                return events.map(event => {
-                    const mappedEvent = { ...event, sourceUrl: url };
-                    if (mappedEvent.country && mappedEvent.country.toLowerCase() === 'spain' && mappedEvent.city && !mappedEvent.provincia) {
-                        const cityLower = mappedEvent.city.toLowerCase();
-                        mappedEvent.provincia = cityToProvinceMap[cityLower] || null;
-                    }
-                    return mappedEvent;
-                });
-            }
-            return [];
+        if (Array.isArray(events) && events.length > 0) {
+            return events.map(event => {
+                const mappedEvent = { ...event, sourceUrl: url };
+                if (mappedEvent.country && mappedEvent.country.toLowerCase() === 'spain' && mappedEvent.city && !mappedEvent.provincia) {
+                    const cityLower = mappedEvent.city.toLowerCase();
+                    mappedEvent.provincia = cityToProvinceMap[cityLower] || null;
+                }
+                return mappedEvent;
+            });
         } else {
             console.error('      -> ⚠️ La IA no devolvió un bloque JSON válido.');
             return [];
