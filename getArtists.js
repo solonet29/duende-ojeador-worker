@@ -3,7 +3,7 @@ const { MongoClient } = require('mongodb');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const OpenAI = require('openai');
+const OpenAI = require('openai'); // Usamos la biblioteca de OpenAI
 const cheerio = require('cheerio');
 
 // --- CONFIGURACIÓN ---
@@ -142,7 +142,6 @@ async function extractEventDataFromURL(url, retries = 3) {
             return [];
         }
     } catch (error) {
-        // El manejo de errores de OpenAI es diferente al de Groq
         if (error.response && error.response.status === 429 && retries > 0) {
             console.warn(`      -> ⏳ ERROR 429: Límite de cuota de OpenAI excedido. Pausando 60 segundos y reintentando...`);
             await delay(60000); 
@@ -167,7 +166,8 @@ async function runScraper() {
         const artistsCollection = database.collection('artists');
         console.log("✅ Conectado a la base de datos.");
 
-        const artistsToSearch = await artistsCollection.find({}).toArray(); 
+        // Buscamos a los siguientes 10 artistas, saltando los primeros 10
+        const artistsToSearch = await artistsCollection.find({}).skip(10).limit(10).toArray(); 
         console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
 
         for (const artist of artistsToSearch) {
