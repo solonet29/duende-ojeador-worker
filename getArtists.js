@@ -33,7 +33,6 @@ const cityToProvinceMap = {
     'sotogrande': 'Cádiz',
 };
 
-// Primer prompt para la extracción de texto simple
 const extractionPromptTemplate = (url, content) => `
     Eres un bot de extracción de datos experto en flamenco. Tu misión es encontrar la información de eventos de flamenco en el siguiente texto y devolverla como texto simple y conciso.
 
@@ -45,7 +44,6 @@ const extractionPromptTemplate = (url, content) => `
     ${content}
 `;
 
-// Segundo prompt para formatear el texto en JSON
 const formatPromptTemplate = (url, textToFormat) => `
     You are a data formatting bot. Your task is to convert the following text into a valid JSON array of flamenco events.
 
