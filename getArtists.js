@@ -2,7 +2,6 @@ require('dotenv').config();
 const { MongoClient } = require('mongodb');
 const axios = require('axios');
 const cheerio = require('cheerio'); 
-// fs y path ya no son necesarios para el output, pero los dejamos por si los usas para otra cosa
 const fs = require('fs');
 const path = require('path');
 
@@ -10,7 +9,7 @@ const path = require('path');
 const mongoUri = process.env.MONGO_URI;
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
-const QUERY_LIMIT = 90;
+// const QUERY_LIMIT = 90; // Límite desactivado correctamente
 
 if (!mongoUri || !googleApiKey || !googleCx) {
     throw new Error('Faltan variables de entorno críticas.');
@@ -19,7 +18,9 @@ if (!mongoUri || !googleApiKey || !googleCx) {
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function runScraper() {
-    console.log("Iniciando ojeador con un límite de " + QUERY_LIMIT + " consultas.");
+    // MENSAJE CORREGIDO: Ya no hace referencia a QUERY_LIMIT
+    console.log("Iniciando ojeador para una búsqueda completa...");
+    
     const client = new MongoClient(mongoUri);
     let allNewEvents = []; 
     let queryCount = 0;
@@ -34,11 +35,9 @@ async function runScraper() {
         console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
 
         for (const artist of artistsToSearch) {
-            if (queryCount >= QUERY_LIMIT) {
-                console.log(`⚠️ Límite de ${QUERY_LIMIT} consultas alcanzado. Deteniendo la búsqueda.`);
-                break; 
-            }
-            // ... (el resto de tu bucle de búsqueda sigue igual)
+            
+            // El bloque IF que limitaba a 90 ya ha sido eliminado correctamente.
+
             console.log(`-------------------------------------------`);
             console.log(`(Consulta #${queryCount + 1}) Buscando eventos para: ${artist.name}`);
             try {
@@ -50,14 +49,16 @@ async function runScraper() {
                 console.log(` -> Encontrados ${searchResults.length} resultados en Google.`);
                 // ... Aquí iría tu lógica de parsing con Cheerio ...
             } catch (error) {
-                console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
+                 if (error.response && error.response.status === 429) {
+                    console.error(`   -> ❌ ERROR 429: Cuota de Google excedida para el artista ${artist.name}. Re-intentando después de una pausa mayor...`);
+                    await delay(60000); // Si hay un error de cuota, esperamos 1 minuto
+                 } else {
+                    console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
+                 }
             }
             await delay(1500);
         }
 
-        // =================================================================
-        // --- CAMBIO IMPORTANTE: DE ARCHIVO JSON A BASE DE DATOS ---
-        // =================================================================
         console.log(`-------------------------------------------`);
         console.log(`Proceso de búsqueda finalizado. Total de eventos nuevos encontrados: ${allNewEvents.length}`);
         
@@ -65,19 +66,13 @@ async function runScraper() {
             console.log("Guardando eventos encontrados en la colección temporal de la base de datos...");
             const tempCollection = database.collection('temp_scraped_events');
             
-            // 1. Borramos los datos antiguos de la colección temporal
             await tempCollection.deleteMany({}); 
-            
-            // 2. Insertamos todos los eventos nuevos encontrados de golpe
             await tempCollection.insertMany(allNewEvents);
             
             console.log(`✅ ${allNewEvents.length} eventos guardados con éxito en la colección 'temp_scraped_events'.`);
         } else {
             console.log("No se encontraron eventos nuevos en esta ejecución.");
         }
-        // =================================================================
-        // --- FIN DEL CAMBIO ---
-        // =================================================================
 
     } catch (error) {
         console.error("Ha ocurrido un error fatal en el proceso principal:", error);
