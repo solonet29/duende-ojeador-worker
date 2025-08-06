@@ -3,7 +3,7 @@ const { MongoClient } = require('mongodb');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const OpenAI = require('openai'); // Usamos la biblioteca de OpenAI
+const OpenAI = require('openai');
 const cheerio = require('cheerio');
 
 // --- CONFIGURACIÓN ---
@@ -33,20 +33,32 @@ const cityToProvinceMap = {
     'sotogrande': 'Cádiz',
 };
 
-const aiPromptTemplate = (url, content) => `
-    Eres un bot de extracción de datos experto en flamenco. Tu única misión es encontrar eventos de flamenco en el siguiente texto y devolverlos en un formato JSON.
+// Primer prompt para la extracción de texto simple
+const extractionPromptTemplate = (url, content) => `
+    Eres un bot de extracción de datos experto en flamenco. Tu misión es encontrar la información de eventos de flamenco en el siguiente texto y devolverla como texto simple y conciso.
 
     - El contenido proviene de la URL: ${url}.
     - Busca conciertos, recitales y festivales que sean futuros (después de hoy). No incluyas eventos pasados.
-    - Tu respuesta DEBE ser SOLAMENTE un array JSON, sin texto, explicaciones o comentarios adicionales.
+    - Devuelve solo los datos relevantes: nombre del evento, artistas, fecha, hora, lugar, ciudad, país y una breve descripción.
 
-    Reglas del formato JSON:
-    - id: un slug único como "antonio-reyes-madrid-2025-10-20".
-    - date: en formato "YYYY-MM-DD".
-    - Si el evento es en España, rellena la "provincia" basándote en la "city" y el "country".
-    - sourceUrl: la URL original.
+    Texto a analizar:
+    ${content}
+`;
 
-    Ejemplo del formato JSON requerido:
+// Segundo prompt para formatear el texto en JSON
+const formatPromptTemplate = (url, textToFormat) => `
+    You are a data formatting bot. Your task is to convert the following text into a valid JSON array of flamenco events.
+
+    - The text comes from the URL: ${url}.
+    - Your response MUST be ONLY a JSON array. Do NOT add any extra text or comments.
+
+    JSON Format Rules:
+    - id: a unique slug like "antonio-reyes-madrid-2025-10-20".
+    - date: in format "YYYY-MM-DD".
+    - If the event is in Spain, try to fill the "provincia" field based on the "city" and "country".
+    - sourceUrl: the original URL.
+    
+    Example of the required JSON format:
     ${JSON.stringify([
         {
             "id": "farruquito-trocadero-flamenco-festival-sotogrande-2025-08-15",
@@ -63,11 +75,9 @@ const aiPromptTemplate = (url, content) => `
             "sourceUrl": "https://farruquito.es/events/"
           }
     ], null, 2)}
-
-    Si no se encuentra ningún evento, devuelve un array vacío [].
-
-    Texto a analizar:
-    ${content}
+    
+    Text to format:
+    ${textToFormat}
 `;
 
 function isFutureEvent(dateString) {
@@ -117,16 +127,23 @@ async function extractEventDataFromURL(url, retries = 3) {
         
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         
-        const prompt = aiPromptTemplate(url, cleanedContent);
-        const chatCompletion = await openai.chat.completions.create({
-            messages: [{ role: "user", content: prompt }],
+        // Paso 1: Extracción de texto simple
+        const rawResponse = await openai.chat.completions.create({
+            messages: [{ role: "user", content: extractionPromptTemplate(url, cleanedContent) }],
             model: "gpt-4o",
             temperature: 0,
         });
+        const extractedText = rawResponse.choices[0]?.message?.content || '';
 
-        const text = chatCompletion.choices[0]?.message?.content || '';
-
-        const events = extractJsonFromResponse(text);
+        // Paso 2: Formatear el texto en JSON
+        const formatResponse = await openai.chat.completions.create({
+            messages: [{ role: "user", content: formatPromptTemplate(url, extractedText) }],
+            model: "gpt-4o",
+            temperature: 0,
+        });
+        const jsonText = formatResponse.choices[0]?.message?.content || '';
+        
+        const events = extractJsonFromResponse(jsonText);
         
         if (Array.isArray(events) && events.length > 0) {
             return events.map(event => {
@@ -166,7 +183,6 @@ async function runScraper() {
         const artistsCollection = database.collection('artists');
         console.log("✅ Conectado a la base de datos.");
 
-        // Buscamos a los siguientes 10 artistas, saltando los primeros 10
         const artistsToSearch = await artistsCollection.find({}).skip(10).limit(10).toArray(); 
         console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
 
