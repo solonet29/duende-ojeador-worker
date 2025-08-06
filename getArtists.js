@@ -70,7 +70,7 @@ const formatPromptTemplate = (url, textToFormat) => `
             "provincia": "Cádiz",
             "country": "España",
             "verified": true,
-            "sourceUrl": "[https://farruquito.es/events/](https://farruquito.es/events/)"
+            "sourceUrl": "https://farruquito.es/events/"
           }
     ], null, 2)}
     
@@ -100,18 +100,16 @@ function cleanHtmlAndExtractText(html) {
 
 function extractJsonFromResponse(responseText) {
     try {
-        // Expresión regular para encontrar el bloque de código de Markdown y el JSON
-        const markdownJsonMatch = responseText.match(/```(?:json)?\n([\s\S]*?)```/);
-        if (markdownJsonMatch && markdownJsonMatch[1]) {
-            return JSON.parse(markdownJsonMatch[1]);
+        const jsonMatch = responseText.match(/```json\n([\s\S]*?)```/);
+        if (jsonMatch && jsonMatch[1]) {
+            return JSON.parse(jsonMatch[1]);
         }
     } catch (e) {
     }
     try {
         const jsonMatch = responseText.match(/\[[\s\S]*?\]/);
         if (jsonMatch) {
-            const jsonString = jsonMatch[0];
-            return JSON.parse(jsonString);
+            return JSON.parse(jsonMatch[0]);
         }
     } catch (e) {
     }
@@ -188,7 +186,8 @@ async function runScraper() {
         const artistsCollection = database.collection('artists');
         console.log("✅ Conectado a la base de datos.");
 
-        const artistsToSearch = await artistsCollection.find({}).skip(10).limit(10).toArray(); 
+        // Buscamos a 10 artistas a partir del número 50
+        const artistsToSearch = await artistsCollection.find({}).skip(50).limit(10).toArray(); 
         console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
 
         for (const artist of artistsToSearch) {
