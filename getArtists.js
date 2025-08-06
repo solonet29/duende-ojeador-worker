@@ -16,17 +16,32 @@ if (!mongoUri || !googleApiKey || !googleCx || !groqApiKey) {
     throw new Error('Faltan variables de entorno críticas.');
 }
 
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 const groq = new Groq({ apiKey: groqApiKey });
 
-// Nuevo prompt en inglés, más directo y estricto
+const cityToProvinceMap = {
+    'málaga': 'Málaga',
+    'madrid': 'Madrid',
+    'barcelona': 'Barcelona',
+    'sevilla': 'Sevilla',
+    'córdoba': 'Córdoba',
+    'granada': 'Granada',
+    'jerez de la frontera': 'Cádiz',
+    'cádiz': 'Cádiz',
+    'valencia': 'Valencia',
+};
+
 const aiPromptTemplate = (url, content) => `
     You are a data extraction bot. Your task is to find flamenco events in the provided text and return a JSON array.
 
     - The content is from the URL: ${url}.
     - Find concerts, recitals, and festivals for the future. Do NOT include past events.
     - Your response MUST be ONLY a JSON array, inside a markdown code block. Do NOT add any extra text, explanations, or comments before or after the code block.
+
+    JSON Format Rules:
+    - `id` should be a unique slug like "antonio-reyes-madrid-2025-10-20".
+    - `date` must be "YYYY-MM-DD" format.
+    - If the event is in Spain, try to fill the "provincia" field based on the "city" and "country".
+    - `sourceUrl` must be the provided URL.
 
     Example of the required JSON format:
     [
@@ -52,11 +67,6 @@ const aiPromptTemplate = (url, content) => `
     ${content}
 `;
 
-/**
- * Filtra los eventos asegurándose de que la fecha sea igual o posterior a la fecha actual.
- * @param {string} dateString La fecha del evento en formato 'YYYY-MM-DD'.
- * @returns {boolean} Verdadero si el evento es futuro o de hoy, falso si es del pasado.
- */
 function isFutureEvent(dateString) {
     if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
         console.warn(`      -> ⚠️ Formato de fecha inválido '${dateString}'. Se descarta el evento.`);
@@ -69,11 +79,6 @@ function isFutureEvent(dateString) {
     return eventDate >= today;
 }
 
-/**
- * Limpia y extrae el texto de un documento HTML, eliminando scripts, estilos y otros elementos no esenciales.
- * @param {string} html El contenido HTML completo de la página.
- * @returns {string} El texto limpio y acortado, listo para ser enviado a la IA.
- */
 function cleanHtmlAndExtractText(html) {
     const dom = new JSDOM(html);
     const document = dom.window.document;
@@ -102,7 +107,7 @@ async function extractEventDataFromURL(url, retries = 3) {
         const chatCompletion = await groq.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
             model: "llama3-8b-8192",
-            temperature: 0, // Un valor de 0 hace que la IA sea menos creativa y más estricta con el formato.
+            temperature: 0, 
         });
 
         const text = chatCompletion.choices[0]?.message?.content || '';
@@ -113,18 +118,23 @@ async function extractEventDataFromURL(url, retries = 3) {
             const jsonString = jsonMatch[1];
             const events = JSON.parse(jsonString);
             if (Array.isArray(events)) {
-                return events.map(event => ({ ...event, sourceUrl: url }));
+                return events.map(event => {
+                    const mappedEvent = { ...event, sourceUrl: url };
+                    if (mappedEvent.country && mappedEvent.country.toLowerCase() === 'spain' && mappedEvent.city && !mappedEvent.provincia) {
+                        const cityLower = mappedEvent.city.toLowerCase();
+                        mappedEvent.provincia = cityToProvinceMap[cityLower] || null;
+                    }
+                    return mappedEvent;
+                });
             }
             return [];
         } else {
             console.error('      -> ⚠️ La IA no devolvió un bloque JSON válido.');
-            console.log('      -> Respuesta de la IA:', text); // Para depurar, imprimimos la respuesta completa.
             return [];
         }
     } catch (error) {
         if (error.message.includes('429 Too Many Requests') && retries > 0) {
             console.warn(`      -> ⏳ ERROR 429: Límite de cuota de Groq excedido. Pausando 60 segundos y reintentando...`);
-            await delay(60000); 
             return extractEventDataFromURL(url, retries - 1);
         } else {
             console.error(`      -> ❌ Error al llamar a la API de Groq para la URL ${url}:`, error.message);
@@ -146,7 +156,8 @@ async function runScraper() {
         const artistsCollection = database.collection('artists');
         console.log("✅ Conectado a la base de datos.");
 
-        const artistsToSearch = await artistsCollection.find({}).limit(5).toArray(); 
+        // Buscamos a todos los artistas sin límite
+        const artistsToSearch = await artistsCollection.find({}).toArray(); 
         console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
 
         for (const artist of artistsToSearch) {
@@ -179,18 +190,14 @@ async function runScraper() {
                             });
                         }
                     }
-                    console.log('      -> Pausando 10 segundos para respetar la cuota de la API...');
-                    await delay(10000); 
                 }
             } catch (error) {
                 if (error.response && error.response.status === 429) {
                     console.error(`   -> ❌ ERROR 429: Cuota de Google excedida...`);
-                    await delay(60000);
                 } else {
                     console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
                 }
             }
-            await delay(1500);
         }
 
         console.log(`-------------------------------------------`);
