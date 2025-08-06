@@ -4,7 +4,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const Groq = require("groq-sdk");
-const { JSDOM } = require('jsdom');
+const cheerio = require('cheerio'); // Usamos cheerio en lugar de jsdom
 
 // --- CONFIGURACIÓN ---
 const mongoUri = process.env.MONGO_URI;
@@ -33,19 +33,19 @@ const cityToProvinceMap = {
 };
 
 const aiPromptTemplate = (url, content) => `
-    You are a data extraction bot. Your task is to find flamenco events in the provided text and return a JSON array.
+    Eres un bot de extracción de datos experto en flamenco. Tu única misión es encontrar eventos de flamenco en el siguiente texto y devolverlos en un formato JSON.
 
-    - The content is from the URL: ${url}.
-    - Find concerts, recitals, and festivals for the future. Do NOT include past events.
-    - Your response MUST be ONLY a JSON array. Do NOT add any extra text, explanations, or comments before or after the JSON.
+    - El contenido proviene de la URL: ${url}.
+    - Busca conciertos, recitales y festivales que sean futuros (después de hoy). No incluyas eventos pasados.
+    - Tu respuesta DEBE ser SOLAMENTE un array JSON, sin texto, explicaciones o comentarios adicionales.
 
-    JSON Format Rules:
-    - id should be a unique slug like "antonio-reyes-madrid-2025-10-20".
-    - date must be "YYYY-MM-DD" format.
-    - If the event is in Spain, try to fill the "provincia" field based on the "city" and "country".
-    - sourceUrl must be the provided URL.
+    Reglas del formato JSON:
+    - id: un slug único como "antonio-reyes-madrid-2025-10-20".
+    - date: en formato "YYYY-MM-DD".
+    - Si el evento es en España, rellena la "provincia" basándote en la "city" y el "country".
+    - sourceUrl: la URL original.
 
-    Example of the required JSON format:
+    Ejemplo del formato JSON requerido:
     [
         {
             "id": "antonio-reyes-madrid-2025-10-20",
@@ -56,16 +56,16 @@ const aiPromptTemplate = (url, content) => `
             "time": "21:00",
             "venue": "Teatro Real",
             "city": "Madrid",
-            "country": "Spain",
+            "country": "España",
             "provincia": "Madrid",
             "verified": true,
             "sourceUrl": "${url}"
         }
     ]
 
-    If no events are found, return an empty array [].
+    Si no se encuentra ningún evento, devuelve un array vacío [].
 
-    Text to analyze:
+    Texto a analizar:
     ${content}
 `;
 
@@ -81,40 +81,30 @@ function isFutureEvent(dateString) {
     return eventDate >= today;
 }
 
+// Nueva función de limpieza de HTML con Cheerio
 function cleanHtmlAndExtractText(html) {
-    const dom = new JSDOM(html);
-    const document = dom.window.document;
+    const $ = cheerio.load(html);
 
-    document.querySelectorAll('script, style, noscript').forEach(el => el.remove());
+    $('script, style, noscript, header, footer, nav, aside').remove();
 
-    const text = document.body.textContent || "";
+    const text = $('body').text() || "";
     const cleanedText = text.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
     
     const MAX_LENGTH = 15000;
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
-/**
- * Busca y extrae el primer bloque JSON válido de una cadena de texto.
- * @param {string} responseText La respuesta completa de la API de IA.
- * @returns {Array} El objeto JSON parseado o un array vacío si falla.
- */
 function extractJsonFromResponse(responseText) {
     try {
-        // Buscar el primer carácter '[' y el último ']' para aislar el array JSON
         const startIndex = responseText.indexOf('[');
         const endIndex = responseText.lastIndexOf(']');
-
         if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
             const jsonString = responseText.substring(startIndex, endIndex + 1);
             return JSON.parse(jsonString);
         }
     } catch (e) {
-        // En caso de error de parseo, se intentará una segunda técnica
     }
-
     try {
-        // Si la primera técnica falla, intenta parsear todo el texto
         return JSON.parse(responseText.trim());
     } catch (e) {
         return [];
@@ -141,13 +131,12 @@ async function extractEventDataFromURL(url, retries = 3) {
 
         const text = chatCompletion.choices[0]?.message?.content || '';
 
-        // Usamos la nueva función para extraer el JSON de forma robusta
         const events = extractJsonFromResponse(text);
         
         if (Array.isArray(events) && events.length > 0) {
             return events.map(event => {
                 const mappedEvent = { ...event, sourceUrl: url };
-                if (mappedEvent.country && mappedEvent.country.toLowerCase() === 'spain' && mappedEvent.city && !mappedEvent.provincia) {
+                if (mappedEvent.country && mappedEvent.country.toLowerCase() === 'españa' && mappedEvent.city && !mappedEvent.provincia) {
                     const cityLower = mappedEvent.city.toLowerCase();
                     mappedEvent.provincia = cityToProvinceMap[cityLower] || null;
                 }
