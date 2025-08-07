@@ -1,40 +1,71 @@
+// getArtists.js
+
+/**
+ * Script autónomo para el proyecto "Duende Finder".
+ * Se encarga de buscar eventos de artistas en Google Search,
+ * encontrar las URLs de las imágenes y guardar los datos en MongoDB.
+ */
+
+// 1. Módulos y dependencias
 require('dotenv').config();
 const { MongoClient } = require('mongodb');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cheerio = require('cheerio');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// --- CONFIGURACIÓN ---
+// 2. Configuración
 const mongoUri = process.env.MONGO_URI;
+const dbName = process.env.DB_NAME || 'DuendeDB';
+const artistsCollectionName = 'artists';
+const tempCollectionName = 'temp_scraped_events';
+
+// Configuración de las APIs
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
+// Verificación de variables de entorno
 if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
     throw new Error('Faltan variables de entorno críticas. Revisa tu archivo .env');
 }
 
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-// --- INICIALIZACIÓN DE GEMINI (Modelo PRO para máxima fiabilidad) ---
+// Inicialización de Gemini (Modelo PRO para máxima fiabilidad)
 const genAI = new GoogleGenerativeAI(geminiApiKey);
-const model = genAI.getGenerativeModel({ 
+const model = genAI.getGenerativeModel({
     model: 'gemini-1.5-pro-latest',
     generationConfig: {
         responseMimeType: 'application/json'
     }
 });
 
-// --- MAPEO DE CIUDADES A PROVINCIAS ---
+// Mapeo de ciudades a provincias
 const cityToProvinceMap = {
     'málaga': 'Málaga', 'madrid': 'Madrid', 'barcelona': 'Barcelona', 'sevilla': 'Sevilla',
     'córdoba': 'Córdoba', 'granada': 'Granada', 'jerez de la frontera': 'Cádiz',
     'cádiz': 'Cádiz', 'valencia': 'Valencia', 'sotogrande': 'Cádiz',
 };
 
-// --- PLANTILLAS DE PROMPT PARA LA IA ---
+// Funciones de utilidad
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function isFutureEvent(dateString) {
+    if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const eventDate = new Date(dateString);
+    return eventDate >= today;
+}
+
+function cleanHtmlAndExtractText(html) {
+    const $ = cheerio.load(html);
+    $('script, style, noscript, header, footer, nav, aside').remove();
+    const text = $('body').text() || "";
+    const cleanedText = text.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const MAX_LENGTH = 15000;
+    return cleanedText.substring(0, MAX_LENGTH);
+}
+
+// Plantillas de prompt para la IA
 const unifiedPromptTemplate = (url, content) => `
     Eres un bot experto en extraer datos de eventos de flamenco.
     Tu única tarea es analizar el texto de la URL "${url}" y devolver un array JSON con los eventos futuros que encuentres.
@@ -55,31 +86,13 @@ const correctionPromptTemplate = (brokenJson, errorMessage) => `
     ${brokenJson}
 `;
 
-// --- FUNCIONES DE UTILIDAD ---
-function isFutureEvent(dateString) {
-    if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const eventDate = new Date(dateString);
-    return eventDate >= today;
-}
-
-function cleanHtmlAndExtractText(html) {
-    const $ = cheerio.load(html);
-    $('script, style, noscript, header, footer, nav, aside').remove();
-    const text = $('body').text() || "";
-    const cleanedText = text.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-    const MAX_LENGTH = 15000;
-    return cleanedText.substring(0, MAX_LENGTH);
-}
-
-// --- LÓGICA DE EXTRACCIÓN CON IA (CON AUTO-CORRECCIÓN) ---
+// Lógica de extracción con IA (con auto-corrección)
 async function extractEventDataFromURL(url, retries = 3) {
-    console.log(`     -> 🤖 Analizando con IA (modelo Pro): ${url}`);
+    console.log(`    -> 🤖 Analizando con IA (modelo Pro): ${url}`);
     try {
         const pageResponse = await axios.get(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-            timeout: 10000 
+            timeout: 10000
         });
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         const prompt = unifiedPromptTemplate(url, cleanedContent);
@@ -89,19 +102,19 @@ async function extractEventDataFromURL(url, retries = 3) {
         try {
             events = JSON.parse(responseText);
         } catch (e) {
-            console.warn(`     -> ⚠️ El JSON inicial no es válido (${e.message}). Intentando auto-corrección...`);
+            console.warn(`    -> ⚠️ El JSON inicial no es válido (${e.message}). Intentando auto-corrección...`);
             const correctionPrompt = correctionPromptTemplate(responseText, e.message);
             const correctedResult = await model.generateContent(correctionPrompt);
             responseText = correctedResult.response.text();
             try {
                 events = JSON.parse(responseText);
-                console.log("     -> ✨ Auto-corrección exitosa.");
+                console.log("    -> ✨ Auto-corrección exitosa.");
             } catch (finalError) {
-                console.error("     -> ❌ Fallo final al parsear JSON incluso después de corregir:", finalError.message);
+                console.error("    -> ❌ Fallo final al parsear JSON incluso después de corregir:", finalError.message);
             }
         }
         if (events.length > 0) {
-            console.log(`     -> ✅ Éxito: La IA ha extraído ${events.length} evento(s).`);
+            console.log(`    -> ✅ Éxito: La IA ha extraído ${events.length} evento(s).`);
             return events.map(event => {
                 const mappedEvent = { ...event };
                 if (mappedEvent.country && mappedEvent.country.toLowerCase() === 'españa' && mappedEvent.city && !mappedEvent.provincia) {
@@ -113,27 +126,28 @@ async function extractEventDataFromURL(url, retries = 3) {
         return [];
     } catch (error) {
         if ((error.message.includes('429') || (error.response && error.response.status === 429)) && retries > 0) {
-            console.warn(`     -> ⏳ ERROR 429: Cuota de Gemini excedida. Pausando 60 segundos...`);
-            await delay(60000); 
+            console.warn(`    -> ⏳ ERROR 429: Cuota de Gemini excedida. Pausando 60 segundos...`);
+            await delay(60000);
             return extractEventDataFromURL(url, retries - 1);
         } else {
-            console.error(`     -> ❌ Error en el proceso de IA para ${url}:`, error.message);
+            console.error(`    -> ❌ Error en el proceso de IA para ${url}:`, error.message);
             return [];
         }
     }
 }
 
-// --- FUNCIÓN PRINCIPAL DEL OJEADOR (VERSIÓN INTELIGENTE Y ROTATIVA) ---
+// Función principal del Ojeador (con lógica de rotación y captura de imagen)
 async function runScraper() {
     console.log("Iniciando ojeador con lógica de rotación inteligente...");
     const client = new MongoClient(mongoUri);
-    let allNewEvents = []; 
+    let allNewEvents = [];
     let queryCount = 0;
 
     try {
         await client.connect();
-        const database = client.db('DuendeDB');
-        const artistsCollection = database.collection('artists');
+        const database = client.db(dbName);
+        const artistsCollection = database.collection(artistsCollectionName);
+        const tempCollection = database.collection(tempCollectionName);
         console.log("✅ Conectado a la base de datos.");
 
         const ARTIST_DAILY_LIMIT = 15;
@@ -151,13 +165,13 @@ async function runScraper() {
             console.log(`-------------------------------------------`);
             console.log(`Procesando artista: ${artist.name}`);
             try {
-                const searchQuery = `concierto flamenco "${artist.name}" 2025`; // Búsqueda mejorada
+                const searchQuery = `concierto flamenco "${artist.name}" 2025`;
                 const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleCx}&q=${encodeURIComponent(searchQuery)}`;
-                queryCount++; 
+                queryCount++;
                 const response = await axios.get(searchUrl);
                 const searchResults = response.data.items || [];
                 console.log(` -> Encontrados ${searchResults.length} resultados en Google.`);
-                
+
                 for (const result of searchResults) {
                     const title = result.title.toLowerCase();
                     const snippet = result.snippet.toLowerCase();
@@ -168,6 +182,12 @@ async function runScraper() {
                         if (eventsFromAI && eventsFromAI.length > 0) {
                             eventsFromAI.forEach(event => {
                                 if (isFutureEvent(event.date)) {
+                                    // NUEVA LÓGICA: Capturar URL de imagen del resultado de búsqueda
+                                    const imageUrl = result.pagemap?.cse_image?.[0]?.src || null;
+                                    event.imageUrl = imageUrl;
+                                    if(imageUrl) {
+                                        console.log(`   -> 🖼️ Imagen encontrada: ${imageUrl}`);
+                                    }
                                     allNewEvents.push(event);
                                 }
                             });
@@ -175,7 +195,7 @@ async function runScraper() {
                     }
                 }
             } catch (error) {
-                 console.error(`   -> ❌ Error procesando a ${artist.name}:`, error.message);
+                console.error(` -> ❌ Error procesando a ${artist.name}:`, error.message);
             }
 
             // "Sellar" el artista como procesado
@@ -183,7 +203,7 @@ async function runScraper() {
                 { _id: artist._id },
                 { $set: { lastScrapedAt: new Date() } }
             );
-            console.log(`   -> ✅ Artista "${artist.name}" marcado como revisado.`);
+            console.log(` -> ✅ Artista "${artist.name}" marcado como revisado.`);
 
             await delay(1500);
         }
@@ -193,10 +213,9 @@ async function runScraper() {
         
         if (allNewEvents.length > 0) {
             console.log("Guardando eventos encontrados en la colección temporal...");
-            const tempCollection = database.collection('temp_scraped_events');
-            await tempCollection.deleteMany({}); 
+            await tempCollection.deleteMany({});
             await tempCollection.insertMany(allNewEvents);
-            console.log(`✅ ${allNewEvents.length} eventos guardados con éxito en la colección 'temp_scraped_events'.`);
+            console.log(`✅ ${allNewEvents.length} eventos guardados con éxito en la colección '${tempCollectionName}'.`);
         } else {
             console.log("No se encontraron eventos nuevos en esta ejecución.");
         }
@@ -209,5 +228,5 @@ async function runScraper() {
     }
 }
 
-// --- EJECUTAR EL SCRIPT imagenes ---
+// Ejecutar el script
 runScraper();
