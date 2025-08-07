@@ -20,7 +20,12 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- INICIALIZACIÓN DE GEMINI ---
 const genAI = new GoogleGenerativeAI(geminiApiKey);
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+const model = genAI.getGenerativeModel({ 
+    model: 'gemini-1.5-flash',
+    generationConfig: {
+        responseMimeType: 'application/json'
+    }
+});
 
 // --- MAPEO DE CIUDADES A PROVINCIAS ---
 const cityToProvinceMap = {
