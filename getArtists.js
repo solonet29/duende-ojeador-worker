@@ -209,5 +209,5 @@ async function runScraper() {
     }
 }
 
-// --- EJECUTAR EL SCRIPT ---
+// --- EJECUTAR EL SCRIPT imagenes ---
 runScraper();
