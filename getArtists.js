@@ -18,10 +18,10 @@ if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- INICIALIZACIÓN DE GEMINI ---
+// --- INICIALIZACIÓN DE GEMINI (Modelo PRO para máxima fiabilidad) ---
 const genAI = new GoogleGenerativeAI(geminiApiKey);
 const model = genAI.getGenerativeModel({ 
-    model: 'gemini-1.5-pro-latest', // <-- ESTE ES EL ÚNICO CAMBIO
+    model: 'gemini-1.5-pro-latest',
     generationConfig: {
         responseMimeType: 'application/json'
     }
@@ -48,7 +48,6 @@ const unifiedPromptTemplate = (url, content) => `
     ${content}
 `;
 
-// NUEVO: Prompt para pedirle a la IA que corrija su propio JSON
 const correctionPromptTemplate = (brokenJson, errorMessage) => `
     El siguiente texto no es un JSON válido. El error es: "${errorMessage}".
     Por favor, arréglalo y devuelve exclusivamente el array JSON corregido y válido. No añadas ningún otro texto.
@@ -57,7 +56,6 @@ const correctionPromptTemplate = (brokenJson, errorMessage) => `
 `;
 
 // --- FUNCIONES DE UTILIDAD ---
-
 function isFutureEvent(dateString) {
     if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return false;
     const today = new Date();
@@ -76,41 +74,32 @@ function cleanHtmlAndExtractText(html) {
 }
 
 // --- LÓGICA DE EXTRACCIÓN CON IA (CON AUTO-CORRECCIÓN) ---
-
 async function extractEventDataFromURL(url, retries = 3) {
-    console.log(`     -> 🤖 Analizando con IA (modo JSON forzado): ${url}`);
-    
+    console.log(`     -> 🤖 Analizando con IA (modelo Pro): ${url}`);
     try {
         const pageResponse = await axios.get(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
             timeout: 10000 
         });
-        
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         const prompt = unifiedPromptTemplate(url, cleanedContent);
         const result = await model.generateContent(prompt);
         let responseText = result.response.text();
-        
         let events = [];
         try {
-            // Intento 1: Parsear directamente
             events = JSON.parse(responseText);
         } catch (e) {
-            // NUEVO: Si el primer intento falla, pedimos a la IA que lo corrija
             console.warn(`     -> ⚠️ El JSON inicial no es válido (${e.message}). Intentando auto-corrección...`);
             const correctionPrompt = correctionPromptTemplate(responseText, e.message);
             const correctedResult = await model.generateContent(correctionPrompt);
             responseText = correctedResult.response.text();
-            
             try {
-                // Intento 2: Parsear la versión corregida
                 events = JSON.parse(responseText);
                 console.log("     -> ✨ Auto-corrección exitosa.");
             } catch (finalError) {
                 console.error("     -> ❌ Fallo final al parsear JSON incluso después de corregir:", finalError.message);
             }
         }
-        
         if (events.length > 0) {
             console.log(`     -> ✅ Éxito: La IA ha extraído ${events.length} evento(s).`);
             return events.map(event => {
@@ -122,7 +111,6 @@ async function extractEventDataFromURL(url, retries = 3) {
             });
         }
         return [];
-
     } catch (error) {
         if ((error.message.includes('429') || (error.response && error.response.status === 429)) && retries > 0) {
             console.warn(`     -> ⏳ ERROR 429: Cuota de Gemini excedida. Pausando 60 segundos...`);
@@ -135,10 +123,9 @@ async function extractEventDataFromURL(url, retries = 3) {
     }
 }
 
-// --- FUNCIÓN PRINCIPAL DEL OJEADOR ---
-// (Esta función no necesita cambios, usará la nueva `extractEventDataFromURL` automáticamente)
+// --- FUNCIÓN PRINCIPAL DEL OJEADOR (VERSIÓN INTELIGENTE Y ROTATIVA) ---
 async function runScraper() {
-    console.log("Iniciando ojeador con extractor de IA (Gemini) y auto-corrector...");
+    console.log("Iniciando ojeador con lógica de rotación inteligente...");
     const client = new MongoClient(mongoUri);
     let allNewEvents = []; 
     let queryCount = 0;
@@ -149,17 +136,23 @@ async function runScraper() {
         const artistsCollection = database.collection('artists');
         console.log("✅ Conectado a la base de datos.");
 
-        const artistsToSearch = await artistsCollection.find({}).toArray(); 
-        console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
+        const ARTIST_DAILY_LIMIT = 15;
+        console.log(`Obteniendo los próximos ${ARTIST_DAILY_LIMIT} artistas de la cola (priorizando nuevos y no revisados)...`);
+
+        const artistsToSearch = await artistsCollection
+            .find({})
+            .sort({ lastScrapedAt: 1 })
+            .limit(ARTIST_DAILY_LIMIT)
+            .toArray();
+
+        console.log(`Encontrados ${artistsToSearch.length} artistas para procesar hoy.`);
 
         for (const artist of artistsToSearch) {
             console.log(`-------------------------------------------`);
-            console.log(`(Consulta #${queryCount + 1}) Buscando eventos para: ${artist.name}`);
-            
+            console.log(`Procesando artista: ${artist.name}`);
             try {
-                const searchQuery = `concierto flamenco "${artist.name}" 2025 entradas`;
+                const searchQuery = `concierto flamenco "${artist.name}" 2025`; // Búsqueda mejorada
                 const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleCx}&q=${encodeURIComponent(searchQuery)}`;
-                
                 queryCount++; 
                 const response = await axios.get(searchUrl);
                 const searchResults = response.data.items || [];
@@ -176,20 +169,22 @@ async function runScraper() {
                             eventsFromAI.forEach(event => {
                                 if (isFutureEvent(event.date)) {
                                     allNewEvents.push(event);
-                                } else {
-                                    console.log(`     -> ❌ Descartado: El evento '${event.name}' es del pasado.`);
                                 }
                             });
                         }
                     }
                 }
             } catch (error) {
-                 if (error.response && error.response.status === 429) {
-                    console.error(`   -> ❌ ERROR 429: Cuota de Google Search excedida...`);
-                 } else {
-                    console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
-                 }
+                 console.error(`   -> ❌ Error procesando a ${artist.name}:`, error.message);
             }
+
+            // "Sellar" el artista como procesado
+            await artistsCollection.updateOne(
+                { _id: artist._id },
+                { $set: { lastScrapedAt: new Date() } }
+            );
+            console.log(`   -> ✅ Artista "${artist.name}" marcado como revisado.`);
+
             await delay(1500);
         }
 
@@ -197,7 +192,7 @@ async function runScraper() {
         console.log(`Proceso de búsqueda finalizado. Total de eventos nuevos encontrados: ${allNewEvents.length}`);
         
         if (allNewEvents.length > 0) {
-            console.log("Guardando eventos encontrados en la colección temporal de la base de datos...");
+            console.log("Guardando eventos encontrados en la colección temporal...");
             const tempCollection = database.collection('temp_scraped_events');
             await tempCollection.deleteMany({}); 
             await tempCollection.insertMany(allNewEvents);
