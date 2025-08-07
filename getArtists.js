@@ -21,7 +21,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 // --- INICIALIZACIÓN DE GEMINI ---
 const genAI = new GoogleGenerativeAI(geminiApiKey);
 const model = genAI.getGenerativeModel({ 
-    model: 'gemini-1.5-flash',
+    model: 'gemini-1.5-pro-latest', // <-- ESTE ES EL ÚNICO CAMBIO
     generationConfig: {
         responseMimeType: 'application/json'
     }
