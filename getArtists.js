@@ -3,89 +3,54 @@ const { MongoClient } = require('mongodb');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cheerio = require('cheerio');
 
 // --- CONFIGURACIÓN ---
 const mongoUri = process.env.MONGO_URI;
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
-const openaiApiKey = process.env.OPENAI_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY;
 
-if (!mongoUri || !googleApiKey || !googleCx || !openaiApiKey) {
-    throw new Error('Faltan variables de entorno críticas.');
+if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
+    throw new Error('Faltan variables de entorno críticas. Revisa tu archivo .env');
 }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-const openai = new OpenAI({ apiKey: openaiApiKey });
+// --- INICIALIZACIÓN DE GEMINI ---
+const genAI = new GoogleGenerativeAI(geminiApiKey);
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
+// --- MAPEO DE CIUDADES A PROVINCIAS ---
 const cityToProvinceMap = {
-    'málaga': 'Málaga',
-    'madrid': 'Madrid',
-    'barcelona': 'Barcelona',
-    'sevilla': 'Sevilla',
-    'córdoba': 'Córdoba',
-    'granada': 'Granada',
-    'jerez de la frontera': 'Cádiz',
-    'cádiz': 'Cádiz',
-    'valencia': 'Valencia',
-    'sotogrande': 'Cádiz',
+    'málaga': 'Málaga', 'madrid': 'Madrid', 'barcelona': 'Barcelona', 'sevilla': 'Sevilla',
+    'córdoba': 'Córdoba', 'granada': 'Granada', 'jerez de la frontera': 'Cádiz',
+    'cádiz': 'Cádiz', 'valencia': 'Valencia', 'sotogrande': 'Cádiz',
 };
 
-const extractionPromptTemplate = (url, content) => `
-    Eres un bot de extracción de datos experto en flamenco. Tu misión es encontrar la información de eventos de flamenco en el siguiente texto y devolverla como texto simple y conciso.
+// --- PLANTILLA DE PROMPT PARA LA IA (UNIFICADA Y MEJORADA) ---
+const unifiedPromptTemplate = (url, content) => `
+    Eres un bot experto en extraer datos de eventos de flamenco.
+    Tu única tarea es analizar el texto de la URL "${url}" y devolver un array JSON con los eventos futuros que encuentres.
 
-    - El contenido proviene de la URL: ${url}.
-    - Busca conciertos, recitales y festivales que sean futuros (después de hoy). No incluyas eventos pasados.
-    - Devuelve solo los datos relevantes: nombre del evento, artistas, fecha, hora, lugar, ciudad, país y una breve descripción.
+    REGLAS ESTRICTAS:
+    1.  Tu respuesta DEBE ser exclusivamente un array JSON válido. No incluyas texto, comentarios, ni la palabra "json".
+    2.  Incluye solo eventos futuros (posteriores a la fecha de hoy).
+    3.  El formato de cada objeto debe ser: { "id": "slug-unico", "name": "Nombre", "artist": "Artista Principal", "description": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "provincia": "Provincia", "country": "País", "verified": false, "sourceUrl": "${url}" }.
+    4.  Si no encuentras ningún evento futuro válido, devuelve un array JSON vacío: [].
 
     Texto a analizar:
     ${content}
 `;
 
-const formatPromptTemplate = (url, textToFormat) => `
-    You are a data formatting bot. Your task is to convert the following text into a valid JSON array of flamenco events.
-
-    - The text comes from the URL: ${url}.
-    - Your response MUST be ONLY a JSON array. Do NOT add any extra text or comments.
-
-    JSON Format Rules:
-    - id: a unique slug like "antonio-reyes-madrid-2025-10-20".
-    - date: in format "YYYY-MM-DD".
-    - If the event is in Spain, try to fill the "provincia" field based on the "city" and "country".
-    - sourceUrl: the original URL.
-
-    Example of the required JSON format:
-    ${JSON.stringify([
-        {
-            "id": "farruquito-trocadero-flamenco-festival-sotogrande-2025-08-15",
-            "name": "Trocadero Flamenco Festival",
-            "artist": "Farruquito",
-            "description": "Actuación de Farruquito en el Trocadero Flamenco Festival.",
-            "date": "2025-08-15",
-            "time": "21:00",
-            "venue": "Trocadero Flamenco Festival",
-            "city": "Sotogrande",
-            "provincia": "Cádiz",
-            "country": "España",
-            "verified": true,
-            "sourceUrl": "https://farruquito.es/events/"
-          }
-    ], null, 2)}
-    
-    Text to format:
-    ${textToFormat}
-`;
+// --- FUNCIONES DE UTILIDAD ---
 
 function isFutureEvent(dateString) {
-    if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-        return false;
-    }
+    if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const eventDate = new Date(dateString);
-    eventDate.setHours(0, 0, 0, 0);
     return eventDate >= today;
 }
 
@@ -94,32 +59,31 @@ function cleanHtmlAndExtractText(html) {
     $('script, style, noscript, header, footer, nav, aside').remove();
     const text = $('body').text() || "";
     const cleanedText = text.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-    const MAX_LENGTH = 15000;
+    const MAX_LENGTH = 15000; // Límite para no exceder el contexto de la IA
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
-// Nueva función de extracción de JSON más robusta
 function extractJsonFromResponse(responseText) {
-    try {
-        const startIndex = responseText.indexOf('[');
-        const endIndex = responseText.lastIndexOf(']');
-        
-        if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-            const jsonString = responseText.substring(startIndex, endIndex + 1);
+    const startIndex = responseText.indexOf('[');
+    const endIndex = responseText.lastIndexOf(']');
+    
+    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        try {
             return JSON.parse(jsonString);
+        } catch (e) {
+            console.error(" -> ⚠️ Error al parsear el bloque JSON extraído:", e.message);
+            return [];
         }
-    } catch (e) {
     }
-
-    try {
-        return JSON.parse(responseText.trim());
-    } catch (e) {
-        return [];
-    }
+    console.error(" -> ⚠️ No se encontró un array JSON válido en la respuesta de la IA.");
+    return [];
 }
 
+// --- LÓGICA DE EXTRACCIÓN CON IA ---
+
 async function extractEventDataFromURL(url, retries = 3) {
-    console.log(`     -> 🤖 Llamando a la IA (OpenAI) para analizar la URL: ${url}`);
+    console.log(`     -> 🤖 Analizando con IA: ${url}`);
     
     try {
         const pageResponse = await axios.get(url, {
@@ -128,124 +92,113 @@ async function extractEventDataFromURL(url, retries = 3) {
         });
         
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
+        const prompt = unifiedPromptTemplate(url, cleanedContent);
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text();
+        const events = extractJsonFromResponse(responseText);
         
-        const rawResponse = await openai.chat.completions.create({
-            messages: [{ role: "user", content: extractionPromptTemplate(url, cleanedContent) }],
-            model: "gpt-4o",
-            temperature: 0,
-        });
-        const extractedText = rawResponse.choices[0]?.message?.content || '';
-
-        const formatResponse = await openai.chat.completions.create({
-            messages: [{ role: "user", content: formatPromptTemplate(url, extractedText) }],
-            model: "gpt-4o",
-            temperature: 0,
-        });
-        const jsonText = formatResponse.choices[0]?.message?.content || '';
-        
-        const events = extractJsonFromResponse(jsonText);
-        
-        if (Array.isArray(events) && events.length > 0) {
+        if (events.length > 0) {
+            console.log(`     -> ✅ Éxito: La IA ha extraído ${events.length} evento(s).`);
             return events.map(event => {
-                const mappedEvent = { ...event, sourceUrl: url };
+                const mappedEvent = { ...event };
                 if (mappedEvent.country && mappedEvent.country.toLowerCase() === 'españa' && mappedEvent.city && !mappedEvent.provincia) {
-                    const cityLower = mappedEvent.city.toLowerCase();
-                    mappedEvent.provincia = cityToProvinceMap[cityLower] || null;
+                    mappedEvent.provincia = cityToProvinceMap[mappedEvent.city.toLowerCase()] || null;
                 }
                 return mappedEvent;
             });
-        } else {
-            console.error('      -> ⚠️ La IA no devolvió un bloque JSON válido.');
-            console.log('      -> Respuesta cruda de la IA:', jsonText);
-            return [];
         }
+        return [];
+
     } catch (error) {
-        if (error.response && error.response.status === 429 && retries > 0) {
-            console.warn(`      -> ⏳ ERROR 429: Límite de cuota de OpenAI excedido. Pausando 60 segundos y reintentando...`);
+        if ((error.message.includes('429') || (error.response && error.response.status === 429)) && retries > 0) {
+            console.warn(`     -> ⏳ ERROR 429: Cuota de Gemini excedida. Pausando 60 segundos...`);
             await delay(60000); 
             return extractEventDataFromURL(url, retries - 1);
         } else {
-            console.error(`      -> ❌ Error al llamar a la API de OpenAI para la URL ${url}:`, error.message);
+            console.error(`     -> ❌ Error en el proceso de IA para ${url}:`, error.message);
             return [];
         }
     }
 }
 
+// --- FUNCIÓN PRINCIPAL DEL OJEADOR ---
 
 async function runScraper() {
-    console.log("Iniciando ojeador con lógica de búsqueda y extractor con IA (OpenAI)...");
-    const client = new MongoClient(mongoUri);
-    let allNewEvents = []; 
-    let queryCount = 0;
+    console.log("Iniciando ojeador con extractor de IA (Gemini)...");
+    const client = new MongoClient(mongoUri);
+    let allNewEvents = []; 
+    let queryCount = 0;
 
-    try {
-        await client.connect();
-        const database = client.db('DuendeDB');
-        const artistsCollection = database.collection('artists');
-        console.log("✅ Conectado a la base de datos.");
+    try {
+        await client.connect();
+        const database = client.db('DuendeDB');
+        const artistsCollection = database.collection('artists');
+        console.log("✅ Conectado a la base de datos.");
 
-        const artistsToSearch = await artistsCollection.find({}).skip(10).limit(10).toArray(); 
-        console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
+        // !! NOTA: Usa .limit() para probar. Quítalo para una ejecución completa.
+        const artistsToSearch = await artistsCollection.find({}).limit(5).toArray(); 
+        console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
 
-        for (const artist of artistsToSearch) {
-            console.log(`-------------------------------------------`);
-            console.log(`(Consulta #${queryCount + 1}) Buscando eventos para: ${artist.name}`);
-            
-            try {
-                const searchQuery = `concierto flamenco "${artist.name}" 2025`;
-                const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleCx}&q=${encodeURIComponent(searchQuery)}`;
-                
-                queryCount++; 
-                const response = await axios.get(searchUrl);
-                const searchResults = response.data.items || [];
-                console.log(` -> Encontrados ${searchResults.length} resultados en Google.`);
-                
-                for (const result of searchResults) {
-                    const title = result.title.toLowerCase();
-                    const snippet = result.snippet.toLowerCase();
-                    const artistNameLower = artist.name.toLowerCase();
+        for (const artist of artistsToSearch) {
+            console.log(`-------------------------------------------`);
+            console.log(`(Consulta #${queryCount + 1}) Buscando eventos para: ${artist.name}`);
+            
+            try {
+                const searchQuery = `concierto flamenco "${artist.name}" 2025 entradas`;
+                const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleCx}&q=${encodeURIComponent(searchQuery)}`;
+                
+                queryCount++; 
+                const response = await axios.get(searchUrl);
+                const searchResults = response.data.items || [];
+                console.log(` -> Encontrados ${searchResults.length} resultados en Google.`);
+                
+                for (const result of searchResults) {
+                    const title = result.title.toLowerCase();
+                    const snippet = result.snippet.toLowerCase();
+                    const artistNameLower = artist.name.toLowerCase();
 
-                    if (title.includes(artistNameLower) || snippet.includes(artistNameLower)) {
-                        const eventsFromAI = await extractEventDataFromURL(result.link);
-                        if (eventsFromAI && eventsFromAI.length > 0) {
+                    if (title.includes(artistNameLower) || snippet.includes(artistNameLower)) {
+                        const eventsFromAI = await extractEventDataFromURL(result.link);
+                        if (eventsFromAI && eventsFromAI.length > 0) {
                             eventsFromAI.forEach(event => {
                                 if (isFutureEvent(event.date)) {
                                     allNewEvents.push(event);
                                 } else {
-                                    console.log(`      -> ❌ Descartado: El evento '${event.name}' es del pasado.`);
+                                    console.log(`     -> ❌ Descartado: El evento '${event.name}' es del pasado.`);
                                 }
                             });
-                        }
-                    }
-                }
-            } catch (error) {
-                if (error.response && error.response.status === 429) {
-                    console.error(`   -> ❌ ERROR 429: Cuota de Google excedida...`);
-                } else {
-                    console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
-                }
-            }
-        }
+                        }
+                    }
+                }
+            } catch (error) {
+                 if (error.response && error.response.status === 429) {
+                    console.error(`   -> ❌ ERROR 429: Cuota de Google Search excedida...`);
+                 } else {
+                    console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
+                 }
+            }
+            await delay(1500); // Pausa para no saturar la API de Google Search
+        }
 
-        console.log(`-------------------------------------------`);
-        console.log(`Proceso de búsqueda finalizado. Total de eventos nuevos encontrados: ${allNewEvents.length}`);
-        
-        if (allNewEvents.length > 0) {
-            console.log("Guardando eventos encontrados en la colección temporal de la base de datos...");
-            const tempCollection = database.collection('temp_scraped_events');
-            await tempCollection.deleteMany({}); 
-            await tempCollection.insertMany(allNewEvents);
-            console.log(`✅ ${allNewEvents.length} eventos guardados con éxito en la colección 'temp_scraped_events'.`);
-        } else {
-            console.log("No se encontraron eventos nuevos en esta ejecución.");
-        }
+        console.log(`-------------------------------------------`);
+        console.log(`Proceso de búsqueda finalizado. Total de eventos nuevos encontrados: ${allNewEvents.length}`);
+        
+        if (allNewEvents.length > 0) {
+            console.log("Guardando eventos encontrados en la colección temporal de la base de datos...");
+            const tempCollection = database.collection('temp_scraped_events');
+            await tempCollection.deleteMany({}); 
+            await tempCollection.insertMany(allNewEvents);
+            console.log(`✅ ${allNewEvents.length} eventos guardados con éxito en la colección 'temp_scraped_events'.`);
+        } else {
+            console.log("No se encontraron eventos nuevos en esta ejecución.");
+        }
 
-    } catch (error) {
-        console.error("Ha ocurrido un error fatal en el proceso principal:", error);
-    } finally {
-        await client.close();
-        console.log("Conexión con la base de datos cerrada.");
-    }
+    } catch (error) {
+        console.error("Ha ocurrido un error fatal en el proceso principal:", error);
+    } finally {
+        await client.close();
+        console.log("Conexión con la base de datos cerrada.");
+    }
 }
 
 runScraper();
