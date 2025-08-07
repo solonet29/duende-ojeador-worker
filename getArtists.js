@@ -18,12 +18,12 @@ if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- INICIALIZACIÓN DE GEMINI ---
+// --- INICIALIZACIÓN DE GEMINI (CON LA SOLUCIÓN) ---
 const genAI = new GoogleGenerativeAI(geminiApiKey);
 const model = genAI.getGenerativeModel({ 
     model: 'gemini-1.5-flash',
     generationConfig: {
-        responseMimeType: 'application/json'
+        responseMimeType: 'application/json' // <-- ¡LA LÍNEA CLAVE!
     }
 });
 
@@ -64,31 +64,24 @@ function cleanHtmlAndExtractText(html) {
     $('script, style, noscript, header, footer, nav, aside').remove();
     const text = $('body').text() || "";
     const cleanedText = text.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-    const MAX_LENGTH = 15000; // Límite para no exceder el contexto de la IA
+    const MAX_LENGTH = 15000;
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
 function extractJsonFromResponse(responseText) {
-    const startIndex = responseText.indexOf('[');
-    const endIndex = responseText.lastIndexOf(']');
-    
-    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        try {
-            return JSON.parse(jsonString);
-        } catch (e) {
-            console.error(" -> ⚠️ Error al parsear el bloque JSON extraído:", e.message);
-            return [];
-        }
+    try {
+        // Con el MimeType forzado, la respuesta debería ser JSON puro.
+        return JSON.parse(responseText);
+    } catch (e) {
+        console.error(" -> ⚠️ La respuesta de la IA, a pesar de ser forzada a JSON, no es válida:", e.message);
+        return [];
     }
-    console.error(" -> ⚠️ No se encontró un array JSON válido en la respuesta de la IA.");
-    return [];
 }
 
 // --- LÓGICA DE EXTRACCIÓN CON IA ---
 
 async function extractEventDataFromURL(url, retries = 3) {
-    console.log(`     -> 🤖 Analizando con IA: ${url}`);
+    console.log(`     -> 🤖 Analizando con IA (modo JSON forzado): ${url}`);
     
     try {
         const pageResponse = await axios.get(url, {
@@ -100,6 +93,7 @@ async function extractEventDataFromURL(url, retries = 3) {
         const prompt = unifiedPromptTemplate(url, cleanedContent);
         const result = await model.generateContent(prompt);
         const responseText = result.response.text();
+        
         const events = extractJsonFromResponse(responseText);
         
         if (events.length > 0) {
@@ -162,6 +156,7 @@ async function runScraper() {
                     const snippet = result.snippet.toLowerCase();
                     const artistNameLower = artist.name.toLowerCase();
 
+                    // Un filtro simple para ver si el resultado es relevante
                     if (title.includes(artistNameLower) || snippet.includes(artistNameLower)) {
                         const eventsFromAI = await extractEventDataFromURL(result.link);
                         if (eventsFromAI && eventsFromAI.length > 0) {
@@ -206,4 +201,5 @@ async function runScraper() {
     }
 }
 
+// --- EJECUTAR EL SCRIPT ---
 runScraper();
