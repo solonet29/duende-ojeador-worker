@@ -18,12 +18,12 @@ if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- INICIALIZACIÓN DE GEMINI (CON LA SOLUCIÓN) ---
+// --- INICIALIZACIÓN DE GEMINI ---
 const genAI = new GoogleGenerativeAI(geminiApiKey);
 const model = genAI.getGenerativeModel({ 
     model: 'gemini-1.5-flash',
     generationConfig: {
-        responseMimeType: 'application/json' // <-- ¡LA LÍNEA CLAVE!
+        responseMimeType: 'application/json'
     }
 });
 
@@ -34,19 +34,26 @@ const cityToProvinceMap = {
     'cádiz': 'Cádiz', 'valencia': 'Valencia', 'sotogrande': 'Cádiz',
 };
 
-// --- PLANTILLA DE PROMPT PARA LA IA (UNIFICADA Y MEJORADA) ---
+// --- PLANTILLAS DE PROMPT PARA LA IA ---
 const unifiedPromptTemplate = (url, content) => `
     Eres un bot experto en extraer datos de eventos de flamenco.
     Tu única tarea es analizar el texto de la URL "${url}" y devolver un array JSON con los eventos futuros que encuentres.
-
     REGLAS ESTRICTAS:
-    1.  Tu respuesta DEBE ser exclusivamente un array JSON válido. No incluyas texto, comentarios, ni la palabra "json".
-    2.  Incluye solo eventos futuros (posteriores a la fecha de hoy).
-    3.  El formato de cada objeto debe ser: { "id": "slug-unico", "name": "Nombre", "artist": "Artista Principal", "description": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "provincia": "Provincia", "country": "País", "verified": false, "sourceUrl": "${url}" }.
-    4.  Si no encuentras ningún evento futuro válido, devuelve un array JSON vacío: [].
-
+    1. Tu respuesta DEBE ser exclusivamente un array JSON válido. No incluyas texto, comentarios, ni la palabra "json".
+    2. Incluye solo eventos futuros (posteriores a la fecha de hoy).
+    3. El formato de cada objeto debe ser: { "id": "slug-unico", "name": "Nombre", "artist": "Artista Principal", "description": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "provincia": "Provincia", "country": "País", "verified": false, "sourceUrl": "${url}" }.
+    4. Asegúrate de que todos los strings dentro del JSON están correctamente escapados.
+    5. Si no encuentras ningún evento futuro válido, devuelve un array JSON vacío: [].
     Texto a analizar:
     ${content}
+`;
+
+// NUEVO: Prompt para pedirle a la IA que corrija su propio JSON
+const correctionPromptTemplate = (brokenJson, errorMessage) => `
+    El siguiente texto no es un JSON válido. El error es: "${errorMessage}".
+    Por favor, arréglalo y devuelve exclusivamente el array JSON corregido y válido. No añadas ningún otro texto.
+    Texto a corregir:
+    ${brokenJson}
 `;
 
 // --- FUNCIONES DE UTILIDAD ---
@@ -68,17 +75,7 @@ function cleanHtmlAndExtractText(html) {
     return cleanedText.substring(0, MAX_LENGTH);
 }
 
-function extractJsonFromResponse(responseText) {
-    try {
-        // Con el MimeType forzado, la respuesta debería ser JSON puro.
-        return JSON.parse(responseText);
-    } catch (e) {
-        console.error(" -> ⚠️ La respuesta de la IA, a pesar de ser forzada a JSON, no es válida:", e.message);
-        return [];
-    }
-}
-
-// --- LÓGICA DE EXTRACCIÓN CON IA ---
+// --- LÓGICA DE EXTRACCIÓN CON IA (CON AUTO-CORRECCIÓN) ---
 
 async function extractEventDataFromURL(url, retries = 3) {
     console.log(`     -> 🤖 Analizando con IA (modo JSON forzado): ${url}`);
@@ -92,9 +89,27 @@ async function extractEventDataFromURL(url, retries = 3) {
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         const prompt = unifiedPromptTemplate(url, cleanedContent);
         const result = await model.generateContent(prompt);
-        const responseText = result.response.text();
+        let responseText = result.response.text();
         
-        const events = extractJsonFromResponse(responseText);
+        let events = [];
+        try {
+            // Intento 1: Parsear directamente
+            events = JSON.parse(responseText);
+        } catch (e) {
+            // NUEVO: Si el primer intento falla, pedimos a la IA que lo corrija
+            console.warn(`     -> ⚠️ El JSON inicial no es válido (${e.message}). Intentando auto-corrección...`);
+            const correctionPrompt = correctionPromptTemplate(responseText, e.message);
+            const correctedResult = await model.generateContent(correctionPrompt);
+            responseText = correctedResult.response.text();
+            
+            try {
+                // Intento 2: Parsear la versión corregida
+                events = JSON.parse(responseText);
+                console.log("     -> ✨ Auto-corrección exitosa.");
+            } catch (finalError) {
+                console.error("     -> ❌ Fallo final al parsear JSON incluso después de corregir:", finalError.message);
+            }
+        }
         
         if (events.length > 0) {
             console.log(`     -> ✅ Éxito: La IA ha extraído ${events.length} evento(s).`);
@@ -121,9 +136,9 @@ async function extractEventDataFromURL(url, retries = 3) {
 }
 
 // --- FUNCIÓN PRINCIPAL DEL OJEADOR ---
-
+// (Esta función no necesita cambios, usará la nueva `extractEventDataFromURL` automáticamente)
 async function runScraper() {
-    console.log("Iniciando ojeador con extractor de IA (Gemini)...");
+    console.log("Iniciando ojeador con extractor de IA (Gemini) y auto-corrector...");
     const client = new MongoClient(mongoUri);
     let allNewEvents = []; 
     let queryCount = 0;
@@ -134,7 +149,6 @@ async function runScraper() {
         const artistsCollection = database.collection('artists');
         console.log("✅ Conectado a la base de datos.");
 
-        // !! NOTA: Usa .limit() para probar. Quítalo para una ejecución completa.
         const artistsToSearch = await artistsCollection.find({}).limit(5).toArray(); 
         console.log(`Encontrados ${artistsToSearch.length} artistas en la base de datos para buscar.`);
 
@@ -156,7 +170,6 @@ async function runScraper() {
                     const snippet = result.snippet.toLowerCase();
                     const artistNameLower = artist.name.toLowerCase();
 
-                    // Un filtro simple para ver si el resultado es relevante
                     if (title.includes(artistNameLower) || snippet.includes(artistNameLower)) {
                         const eventsFromAI = await extractEventDataFromURL(result.link);
                         if (eventsFromAI && eventsFromAI.length > 0) {
@@ -177,7 +190,7 @@ async function runScraper() {
                     console.error(`   -> ❌ Error buscando para ${artist.name}:`, error.message);
                  }
             }
-            await delay(1500); // Pausa para no saturar la API de Google Search
+            await delay(1500);
         }
 
         console.log(`-------------------------------------------`);
