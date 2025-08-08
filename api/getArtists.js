@@ -96,6 +96,8 @@ async function extractEventDataFromURL(url, retries = 3) {
         });
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         const prompt = unifiedPromptTemplate(url, cleanedContent);
+        console.log(`      -> 🤖 Llamando a Gemini para extraer datos de eventos...`); 
+        
         const result = await model.generateContent(prompt);
         let responseText = result.response.text();
         let events = [];
@@ -167,6 +169,9 @@ async function runScraper() {
             try {
                 const searchQuery = `concierto flamenco "${artist.name}" 2025`;
                 const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleCx}&q=${encodeURIComponent(searchQuery)}`;
+                console.log(` -> 🔍 Realizando búsqueda en Google: "${searchQuery}"`); 
+    
+                const response = await axios.get(searchUrl);
                 queryCount++;
                 const response = await axios.get(searchUrl);
                 const searchResults = response.data.items || [];
