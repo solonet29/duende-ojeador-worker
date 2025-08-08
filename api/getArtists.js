@@ -170,8 +170,7 @@ async function runScraper() {
                 const searchQuery = `concierto flamenco "${artist.name}" 2025`;
                 const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleCx}&q=${encodeURIComponent(searchQuery)}`;
                 console.log(` -> 🔍 Realizando búsqueda en Google: "${searchQuery}"`); 
-    
-                const response = await axios.get(searchUrl);
+
                 queryCount++;
                 const response = await axios.get(searchUrl);
                 const searchResults = response.data.items || [];
