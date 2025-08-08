@@ -175,8 +175,9 @@ async function runScraper() {
                 const response = await axios.get(searchUrl);
                 const searchResults = response.data.items || [];
                 console.log(` -> Encontrados ${searchResults.length} resultados en Google.`);
-
-                for (const result of searchResults) {
+                const limitedResults = searchResults.slice(0, 3);
+                console.log(` -> Procesando solo los primeros ${limitedResults.length} resultados para evitar timeout.`);    
+                for (const result of limitedResults) {
                     const title = result.title.toLowerCase();
                     const snippet = result.snippet.toLowerCase();
                     const artistNameLower = artist.name.toLowerCase();
