@@ -232,5 +232,26 @@ async function runScraper() {
     }
 }
 
-// Ejecutar el script
-runScraper();
+// -------------------------------------------------------------
+// --- HANDLER PARA VERCEL (VERSIÓN MEJORADA CON TRY/CATCH) ---
+// -------------------------------------------------------------
+module.exports = async (req, res) => {
+    try {
+        const mongoUri = process.env.MONGO_URI;
+        const googleApiKey = process.env.GOOGLE_API_KEY;
+        const googleCx = process.env.GOOGLE_CX;
+        const geminiApiKey = process.env.GEMINI_API_KEY;
+
+        if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
+            throw new Error('Faltan variables de entorno críticas.');
+        }
+
+        console.log("Iniciando ojeador con lógica de rotación inteligente...");
+        await runScraper();
+        
+        res.status(200).send('Ojeador ejecutado con éxito.');
+    } catch (error) {
+        console.error('Error fatal en el proceso del ojeador:', error.message);
+        res.status(500).send('Error fatal en el proceso del ojeador.');
+    }
+};
