@@ -20,7 +20,7 @@ const artistsCollectionName = 'artists';
 const tempCollectionName = 'temp_scraped_events';
 
 // Configuración de las APIs
-const googleApiKey = process.env.GOOGLE_API_KEY;
+const googleApiKey = process.env.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
@@ -66,29 +66,30 @@ function cleanHtmlAndExtractText(html) {
 }
 
 // Plantillas de prompt para la IA
+// --- PROMPT MEJORADO para incluir el ROL del artista ---
 const unifiedPromptTemplate = (url, content) => `
-    Eres un bot experto en extraer datos de eventos de flamenco.
-    Tu única tarea es analizar el texto de la URL "${url}" y devolver un array JSON con los eventos futuros que encuentres.
-    REGLAS ESTRICTAS:
-    1. Tu respuesta DEBE ser exclusivamente un array JSON válido. No incluyas texto, comentarios, ni la palabra "json".
-    2. Incluye solo eventos futuros (posteriores a la fecha de hoy).
-    3. El formato de cada objeto debe ser: { "id": "slug-unico", "name": "Nombre", "artist": "Artista Principal", "description": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "provincia": "Provincia", "country": "País", "verified": false, "sourceUrl": "${url}" }.
-    4. Asegúrate de que todos los strings dentro del JSON están correctamente escapados.
-    5. Si no encuentras ningún evento futuro válido, devuelve un array JSON vacío: [].
-    Texto a analizar:
-    ${content}
+    Eres un bot experto en extraer datos de eventos de flamenco.
+    Tu única tarea es analizar el texto de la URL "${url}" y devolver un array JSON con los eventos futuros que encuentres.
+    REGLAS ESTRICTAS:
+    1. Tu respuesta DEBE ser exclusivamente un array JSON válido. No incluyas texto, comentarios, ni la palabra "json".
+    2. Incluye solo eventos futuros (posteriores a la fecha de hoy).
+    3. El formato de cada objeto debe ser: { "id": "slug-unico", "name": "Nombre", "artist": "Artista Principal", "rol": "ROL DEL ARTISTA (e.g., Cantaor, Bailaor, Guitarrista)", "description": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "provincia": "Provincia", "country": "País", "verified": false, "sourceUrl": "${url}" }.
+    4. Asegúrate de que todos los strings dentro del JSON están correctamente escapados.
+    5. Si no encuentras ningún evento futuro válido, devuelve un array JSON vacío: [].
+    Texto a analizar:
+    ${content}
 `;
 
 const correctionPromptTemplate = (brokenJson, errorMessage) => `
-    El siguiente texto no es un JSON válido. El error es: "${errorMessage}".
-    Por favor, arréglalo y devuelve exclusivamente el array JSON corregido y válido. No añadas ningún otro texto.
-    Texto a corregir:
-    ${brokenJson}
+    El siguiente texto no es un JSON válido. El error es: "${errorMessage}".
+    Por favor, arréglalo y devuelve exclusivamente el array JSON corregido y válido. No añadas ningún otro texto.
+    Texto a corregir:
+    ${brokenJson}
 `;
 
 // Lógica de extracción con IA (con auto-corrección)
 async function extractEventDataFromURL(url, retries = 3) {
-    console.log(`    -> 🤖 Analizando con IA (modelo Pro): ${url}`);
+    console.log(`    -> 🤖 Analizando con IA (modelo Pro): ${url}`);
     try {
         const pageResponse = await axios.get(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -96,27 +97,27 @@ async function extractEventDataFromURL(url, retries = 3) {
         });
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         const prompt = unifiedPromptTemplate(url, cleanedContent);
-        console.log(`      -> 🤖 Llamando a Gemini para extraer datos de eventos...`); 
-        
+        console.log(`      -> 🤖 Llamando a Gemini para extraer datos de eventos...`);
+
         const result = await model.generateContent(prompt);
         let responseText = result.response.text();
         let events = [];
         try {
             events = JSON.parse(responseText);
         } catch (e) {
-            console.warn(`    -> ⚠️ El JSON inicial no es válido (${e.message}). Intentando auto-corrección...`);
+            console.warn(`    -> ⚠️ El JSON inicial no es válido (${e.message}). Intentando auto-corrección...`);
             const correctionPrompt = correctionPromptTemplate(responseText, e.message);
             const correctedResult = await model.generateContent(correctionPrompt);
             responseText = correctedResult.response.text();
             try {
                 events = JSON.parse(responseText);
-                console.log("    -> ✨ Auto-corrección exitosa.");
+                console.log("    -> ✨ Auto-corrección exitosa.");
             } catch (finalError) {
-                console.error("    -> ❌ Fallo final al parsear JSON incluso después de corregir:", finalError.message);
+                console.error("    -> ❌ Fallo final al parsear JSON incluso después de corregir:", finalError.message);
             }
         }
         if (events.length > 0) {
-            console.log(`    -> ✅ Éxito: La IA ha extraído ${events.length} evento(s).`);
+            console.log(`    -> ✅ Éxito: La IA ha extraído ${events.length} evento(s).`);
             return events.map(event => {
                 const mappedEvent = { ...event };
                 if (mappedEvent.country && mappedEvent.country.toLowerCase() === 'españa' && mappedEvent.city && !mappedEvent.provincia) {
@@ -128,11 +129,11 @@ async function extractEventDataFromURL(url, retries = 3) {
         return [];
     } catch (error) {
         if ((error.message.includes('429') || (error.response && error.response.status === 429)) && retries > 0) {
-            console.warn(`    -> ⏳ ERROR 429: Cuota de Gemini excedida. Pausando 60 segundos...`);
+            console.warn(`    -> ⏳ ERROR 429: Cuota de Gemini excedida. Pausando 60 segundos...`);
             await delay(60000);
             return extractEventDataFromURL(url, retries - 1);
         } else {
-            console.error(`    -> ❌ Error en el proceso de IA para ${url}:`, error.message);
+            console.error(`    -> ❌ Error en el proceso de IA para ${url}:`, error.message);
             return [];
         }
     }
@@ -152,7 +153,7 @@ async function runScraper() {
         const tempCollection = database.collection(tempCollectionName);
         console.log("✅ Conectado a la base de datos.");
 
-        const ARTIST_DAILY_LIMIT = 15;
+        const ARTIST_DAILY_LIMIT = 30;
         console.log(`Obteniendo los próximos ${ARTIST_DAILY_LIMIT} artistas de la cola (priorizando nuevos y no revisados)...`);
 
         const artistsToSearch = await artistsCollection
@@ -169,14 +170,14 @@ async function runScraper() {
             try {
                 const searchQuery = `concierto flamenco "${artist.name}" 2025`;
                 const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleCx}&q=${encodeURIComponent(searchQuery)}`;
-                console.log(` -> 🔍 Realizando búsqueda en Google: "${searchQuery}"`); 
+                console.log(` -> 🔍 Realizando búsqueda en Google: "${searchQuery}"`);
 
                 queryCount++;
                 const response = await axios.get(searchUrl);
                 const searchResults = response.data.items || [];
                 console.log(` -> Encontrados ${searchResults.length} resultados en Google.`);
-                const limitedResults = searchResults.slice(0, 3);
-                console.log(` -> Procesando solo los primeros ${limitedResults.length} resultados para evitar timeout.`);    
+                const limitedResults = searchResults.slice(0, 1);
+                console.log(` -> Procesando solo el primer resultado para optimizar.`);
                 for (const result of limitedResults) {
                     const title = result.title.toLowerCase();
                     const snippet = result.snippet.toLowerCase();
@@ -190,8 +191,8 @@ async function runScraper() {
                                     // NUEVA LÓGICA: Capturar URL de imagen del resultado de búsqueda
                                     const imageUrl = result.pagemap?.cse_image?.[0]?.src || null;
                                     event.imageUrl = imageUrl;
-                                    if(imageUrl) {
-                                        console.log(`   -> 🖼️ Imagen encontrada: ${imageUrl}`);
+                                    if (imageUrl) {
+                                        console.log(`   -> 🖼️ Imagen encontrada: ${imageUrl}`);
                                     }
                                     allNewEvents.push(event);
                                 }
@@ -215,7 +216,7 @@ async function runScraper() {
 
         console.log(`-------------------------------------------`);
         console.log(`Proceso de búsqueda finalizado. Total de eventos nuevos encontrados: ${allNewEvents.length}`);
-        
+
         if (allNewEvents.length > 0) {
             console.log("Guardando eventos encontrados en la colección temporal...");
             await tempCollection.deleteMany({});
@@ -249,7 +250,7 @@ module.exports = async (req, res) => {
 
         console.log("Iniciando ojeador con lógica de rotación inteligente...");
         await runScraper();
-        
+
         res.status(200).send('Ojeador ejecutado con éxito.');
     } catch (error) {
         console.error('Error fatal en el proceso del ojeador:', error.message);
