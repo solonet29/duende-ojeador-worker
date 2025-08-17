@@ -2,10 +2,10 @@
   "name": "duende-ojeador-worker",
   "version": "1.0.0",
   "description": "",
-  "main": "getArtists.js",
+  "main": "api/getArtists.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node getArtists.js"
+    "start": "node api/getArtists.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.15.0",
