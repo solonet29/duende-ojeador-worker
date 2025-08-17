@@ -33,7 +33,7 @@ if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
 // Inicialización de Gemini (Modelo PRO para máxima fiabilidad)
 const genAI = new GoogleGenerativeAI(geminiApiKey);
 const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-pro-latest',
+    model: 'gemini-1.5-flash-latest',
     generationConfig: {
         responseMimeType: 'application/json'
     }
