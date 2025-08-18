@@ -1,14 +1,15 @@
-// api/findEvents.js - DESPACHADOR CON CONEXIÓN DIRECTA
+// api/findEvents.js - DESPACHADOR CON CONEXIÓN ROBUSTA
 require('dotenv').config();
 const { MongoClient } = require('mongodb');
-const Redis = require('ioredis'); // <-- CAMBIO: Nueva librería
+const Redis = require('ioredis');
 
 const mongoUri = process.env.MONGO_URI;
 const dbName = process.env.DB_NAME || 'DuendeDB';
 const artistsCollectionName = 'artists';
 
-// --- CAMBIO: Creamos el cliente de Redis directamente con la URL que sí tenemos ---
+// --- CAMBIO: Creamos el cliente de Redis FUERA del handler ---
 const redis = new Redis(process.env.REDIS_URL);
+console.log("Redis client initialized.");
 
 async function queueJobs() {
     console.log("🚀 Iniciando Despachador para encolar tareas...");
@@ -21,8 +22,6 @@ async function queueJobs() {
 
         if (artistsToSearch.length > 0) {
             console.log(`📨 Añadiendo ${artistsToSearch.length} artistas a la cola...`);
-            // CAMBIO: Usamos redis.lpush en lugar de kv.lpush
-            // Tenemos que convertir los objetos a string para guardarlos
             const artistPayloads = artistsToSearch.map(artist => JSON.stringify(artist));
             await redis.lpush('artist-queue', ...artistPayloads);
 
@@ -33,11 +32,17 @@ async function queueJobs() {
         }
     } finally {
         await client.close();
-        await redis.quit(); // Cerramos la conexión de Redis
+        // --- CAMBIO CLAVE: NO LLAMAMOS A redis.quit() AQUÍ ---
+        // Dejamos la conexión abierta para que Vercel la reutilice.
     }
 }
 
 module.exports = async (req, res) => {
-    await queueJobs();
-    res.status(200).send('Proceso de encolado completado.');
+    try {
+        await queueJobs();
+        res.status(200).send('Proceso de encolado completado.');
+    } catch (error) {
+        console.error('Error en el despachador:', error);
+        res.status(500).send('Error interno del servidor.');
+    }
 };
