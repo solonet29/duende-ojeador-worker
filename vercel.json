@@ -1,12 +1,13 @@
 {
     "crons": [
         {
-            "path": "/api/findArtists",
-            "schedule": "0 2 * * 1"
+            "path": "/api/findEvents", // El Despachador que llena la cola
+            "schedule": "0 8,14,20 * * *"
         },
         {
-            "path": "/api/findEvents",
-            "schedule": "0 8,14,20 * * *"
-        }
+            "path": "/api/processArtist", // El Trabajador que vacía la cola
+            "schedule": "* * * * *"
+        },
+        // ... (El resto de tus bots, ingesta, etc.)
     ]
 }
