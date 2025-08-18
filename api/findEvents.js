@@ -1,25 +1,21 @@
-// api/findEvents.js - EL DESPACHADOR (VERSIÓN FINAL)
+// api/findEvents.js - DESPACHADOR (VERSIÓN OPTIMIZADA)
 
 require('dotenv').config();
 const { MongoClient } = require('mongodb');
 const axios = require('axios');
 
-// --- Configuración ---
 const mongoUri = process.env.MONGO_URI;
 const dbName = process.env.DB_NAME || 'DuendeDB';
 const artistsCollectionName = 'artists';
 
-// --- Lógica del Despachador ---
 async function dispatchJobs() {
-    console.log("🚀 Iniciando Despachador para distribuir tareas...");
+    console.log("🚀 Iniciando Despachador Optimizado...");
     const client = new MongoClient(mongoUri);
 
     const baseUrl = (process.env.VERCEL_URL && !process.env.VERCEL_URL.startsWith('localhost'))
         ? `https://${process.env.VERCEL_URL}`
         : `http://localhost:3000`;
     const workerUrl = `${baseUrl}/api/processArtist`;
-
-    // Obtenemos la credencial secreta de las variables de entorno
     const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
 
     try {
@@ -35,35 +31,37 @@ async function dispatchJobs() {
             return;
         }
 
-        console.log(`📨 Despachando ${artistsToSearch.length} tareas a los trabajadores...`);
+        console.log(`📨 Despachando ${artistsToSearch.length} tareas...`);
 
+        // --- INICIO DE LA OPTIMIZACIÓN ---
+
+        // 1. Lanzamos todas las llamadas a los trabajadores en paralelo
         const dispatchPromises = artistsToSearch.map(artist => {
-            // --- ¡AQUÍ ESTÁ LA MODIFICACIÓN CLAVE! ---
-            // Añadimos la cabecera 'x-vercel-protection-bypass' a la llamada
             return axios.post(workerUrl, { artist }, {
-                headers: {
-                    'x-vercel-protection-bypass': bypassSecret
-                }
-            })
-                .then(() => {
-                    return artistsCollection.updateOne({ _id: artist._id }, { $set: { lastScrapedAt: new Date() } });
-                })
-                .catch(error => {
-                    console.error(`❌ Error al despachar tarea para ${artist.name}.`);
-                    if (error.response) {
-                        console.error('Data:', error.response.data);
-                        console.error('Status:', error.response.status);
-                    } else {
-                        console.error('Error:', error.message);
-                    }
-                });
+                headers: { 'x-vercel-protection-bypass': bypassSecret }
+            }).catch(error => {
+                // El log de error ya es detallado, lo mantenemos
+                console.error(`❌ Error al despachar tarea para ${artist.name}. Status: ${error.response?.status}`);
+            });
         });
 
-        await Promise.all(dispatchPromises);
-        console.log("✅ Todas las tareas han sido despachadas.");
+        // 2. Preparamos UNA SOLA actualización masiva para la base de datos
+        const artistIdsToUpdate = artistsToSearch.map(a => a._id);
+        const updatePromise = artistsCollection.updateMany(
+            { _id: { $in: artistIdsToUpdate } },
+            { $set: { lastScrapedAt: new Date() } }
+        );
+        console.log(`...y preparando la actualización de ${artistIdsToUpdate.length} artistas en la BD.`);
+
+        // 3. Esperamos a que todo termine (llamadas y la única actualización a la BD)
+        await Promise.all([...dispatchPromises, updatePromise]);
+
+        // --- FIN DE LA OPTIMIZACIÓN ---
+
+        console.log("✅ Despacho y actualización de BD completados con éxito.");
 
     } catch (error) {
-        console.error("💥 Error fatal en el Despachador:", error);
+        console.error("💥 Error fatal en el Despachador Optimizado:", error);
     } finally {
         if (client) {
             await client.close();
@@ -71,7 +69,7 @@ async function dispatchJobs() {
     }
 }
 
-// --- Handler para Vercel ---
+// --- Handler para Vercel (Sin cambios) ---
 module.exports = async (req, res) => {
     await dispatchJobs();
     res.status(202).send('Despacho de tareas completado.');
