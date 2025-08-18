@@ -75,7 +75,7 @@ async function dispatchJobs() {
 // --- Handler para Vercel ---
 module.exports = async (req, res) => {
     // Ejecutamos la lógica de despacho en segundo plano.
-    dispatchJobs();
+    await dispatchJobs();
 
     // Respondemos inmediatamente al Cron Job con "202-Accepted".
     // Esto le dice a Vercel: "He recibido tu orden y ya me he puesto a trabajar".
