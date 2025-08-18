@@ -1,0 +1,12 @@
+{
+    "crons": [
+        {
+            "path": "/api/findArtists",
+            "schedule": "0 2 * * 1"
+        },
+        {
+            "path": "/api/findEvents",
+            "schedule": "0 8,14,20 * * *"
+        }
+    ]
+}
