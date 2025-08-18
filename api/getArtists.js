@@ -63,16 +63,16 @@ function cleanHtmlAndExtractText(html) {
 }
 
 // Plantillas de prompt para la IA
-// --- PROMPT OPTIMIZADO: Simplificamos el artista a un string ---
+// --- PROMPT MEJORADO para mayor precisión ---
 const unifiedPromptTemplate = (url, content) => `
     Eres un bot experto en extraer datos de eventos de flamenco.
-    Tu única tarea es analizar el texto de la URL "${url}" y devolver un array JSON con los eventos futuros que encuentres.
+    Tu única tarea es analizar el texto de la URL "${url}" y devolver un array JSON con los eventos **futuros y de flamenco** que encuentres.
     REGLAS ESTRICTAS:
     1. Tu respuesta DEBE ser exclusivamente un array JSON válido. No incluyas texto, comentarios, ni la palabra "json".
-    2. Incluye solo eventos futuros (posteriores a la fecha de hoy).
+    2. Incluye solo eventos que sean claramente de **flamenco** (conciertos, recitales, espectáculos, etc.).
     3. El formato de cada objeto debe ser: { "id": "slug-unico", "name": "Nombre", "artist": "Nombre del Artista", "description": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "provincia": "Provincia", "country": "País", "verified": false, "sourceUrl": "${url}" }.
     4. Asegúrate de que todos los strings dentro del JSON están correctamente escapados.
-    5. Si no encuentras ningún evento futuro válido, devuelve un array JSON vacío: [].
+    5. Si no encuentras ningún evento de flamenco, devuelve un array JSON vacío: [].
     Texto a analizar:
     ${content}
 `;
