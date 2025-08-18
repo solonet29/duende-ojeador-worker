@@ -7,14 +7,6 @@
         {
             "path": "/api/findEvents",
             "schedule": "0 8,14,20 * * *"
-        },
-        {
-            "path": "/api/ingesta",
-            "schedule": "30 8,14,20 * * *"
-        },
-        {
-            "path": "/api/content-creator",
-            "schedule": "0 9,15,21 * * *"
         }
     ]
 }
