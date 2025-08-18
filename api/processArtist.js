@@ -1,26 +1,32 @@
-// api/processArtist.js - TRABAJADOR DE COLA
+// api/processArtist.js - TRABAJADOR CON CONEXIÓN DIRECTA
 require('dotenv').config();
-const { kv } = require('@vercel/kv');
-// ... (mantén el resto de tus requires y funciones de utilidad: MongoClient, axios, Gemini, etc.)
+const Redis = require('ioredis'); // <-- CAMBIO: Nueva librería
+// ... (mantén el resto de tus requires: MongoClient, axios, Gemini, etc.)
 
-// ... (mantén la función processSingleArtist que ya tenías)
+// --- CAMBIO: Creamos el cliente de Redis ---
+const redis = new Redis(process.env.REDIS_URL);
+
+// ... (mantén tus funciones de utilidad y la función processSingleArtist)
 async function processSingleArtist(artist) { /* ...el código que ya tienes... */ }
 
-async function processQueue() {
-    console.log("👷 Trabajador de cola iniciado. Buscando tareas...");
-    // RPOP saca el último artista de la lista. Si no hay, devuelve null.
-    const artist = await kv.rpop('artist-queue');
 
-    if (artist) {
-        console.log(`📬 Tarea recibida. Procesando al artista: ${artist.name}`);
+async function processQueue() {
+    console.log("👷 Trabajador iniciado. Buscando tareas...");
+    // CAMBIO: Usamos redis.rpop
+    const artistString = await redis.rpop('artist-queue');
+
+    if (artistString) {
+        const artist = JSON.parse(artistString); // Convertimos el string de vuelta a objeto
+        console.log(`📬 Tarea recibida. Procesando: ${artist.name}`);
         await processSingleArtist(artist);
         console.log(`✅ Tarea para ${artist.name} completada.`);
     } else {
-        console.log("📪 No hay tareas en la cola. El trabajador se va a dormir.");
+        console.log("📪 No hay tareas en la cola.");
     }
+    await redis.quit(); // Cerramos la conexión de Redis
 }
 
 module.exports = async (req, res) => {
     await processQueue();
-    res.status(200).send('Ciclo del trabajador de cola completado.');
+    res.status(200).send('Ciclo del trabajador completado.');
 };
