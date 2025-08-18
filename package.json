@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.15.0",
+    "@vercel/kv": "^3.0.0",
     "axios": "^1.7.2",
     "cheerio": "^1.1.2",
     "dotenv": "^16.4.5",

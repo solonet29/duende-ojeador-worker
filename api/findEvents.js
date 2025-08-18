@@ -1,18 +1,14 @@
-// api/findEvents.js - DESPACHADOR CON CONEXIÓN ROBUSTA
+// api/findEvents.js - DESPACHADOR CON VERCELL KV
 require('dotenv').config();
 const { MongoClient } = require('mongodb');
-const Redis = require('ioredis');
+const { kv } = require('@vercel/kv'); // <-- CAMBIO CLAVE: Usamos el cliente oficial de Vercel KV
 
 const mongoUri = process.env.MONGO_URI;
 const dbName = process.env.DB_NAME || 'DuendeDB';
 const artistsCollectionName = 'artists';
 
-// --- CAMBIO: Creamos el cliente de Redis FUERA del handler ---
-const redis = new Redis(process.env.REDIS_URL);
-console.log("Redis client initialized.");
-
 async function queueJobs() {
-    console.log("🚀 Iniciando Despachador para encolar tareas...");
+    console.log("🚀 Iniciando Despachador para encolar tareas con Vercel KV...");
     const client = new MongoClient(mongoUri);
     try {
         await client.connect();
@@ -23,7 +19,7 @@ async function queueJobs() {
         if (artistsToSearch.length > 0) {
             console.log(`📨 Añadiendo ${artistsToSearch.length} artistas a la cola...`);
             const artistPayloads = artistsToSearch.map(artist => JSON.stringify(artist));
-            await redis.lpush('artist-queue', ...artistPayloads);
+            await kv.lpush('artist-queue', ...artistPayloads); // <-- CAMBIO: Usamos kv.lpush
 
             const idsToUpdate = artistsToSearch.map(a => a._id);
             await artists.updateMany({ _id: { $in: idsToUpdate } }, { $set: { lastScrapedAt: new Date() } });
@@ -32,8 +28,6 @@ async function queueJobs() {
         }
     } finally {
         await client.close();
-        // --- CAMBIO CLAVE: NO LLAMAMOS A redis.quit() AQUÍ ---
-        // Dejamos la conexión abierta para que Vercel la reutilice.
     }
 }
 
