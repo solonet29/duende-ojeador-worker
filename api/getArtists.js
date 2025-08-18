@@ -1,10 +1,6 @@
 /**
  * Script autónomo para el proyecto "Duende Finder".
- * Se encarga de buscar eventos de artistas, identificar sus roles,
- * ingestar nuevos artistas en la base de datos y guardar los eventos encontrados.
- *
- * Fase 1: Búsqueda de eventos.
- * Fase 2: Enriquecimiento de la base de datos de artistas.
+ * Se encarga de buscar eventos de artistas y guardar los eventos encontrados.
  */
 
 // 1. Módulos y dependencias
@@ -21,7 +17,7 @@ const artistsCollectionName = 'artists';
 const tempCollectionName = 'temp_scraped_events';
 
 // Configuración de las APIs
-const googleApiKey = process.env.GOOGLE_API_KEY; // Corregido: Quitado el .env extra
+const googleApiKey = process.env.GOOGLE_API_KEY;
 const googleCx = process.env.GOOGLE_CX;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
@@ -30,7 +26,7 @@ if (!mongoUri || !googleApiKey || !googleCx || !geminiApiKey) {
     throw new Error('Faltan variables de entorno críticas. Revisa tu archivo .env');
 }
 
-// Inicialización de Gemini (Modelo PRO para máxima fiabilidad)
+// Inicialización de Gemini (Modelo FLASH para mayor velocidad)
 const genAI = new GoogleGenerativeAI(geminiApiKey);
 const model = genAI.getGenerativeModel({
     model: 'gemini-1.5-flash-latest',
@@ -67,14 +63,14 @@ function cleanHtmlAndExtractText(html) {
 }
 
 // Plantillas de prompt para la IA
-// --- PROMPT MEJORADO para incluir el ROL del artista ---
+// --- PROMPT OPTIMIZADO: Simplificamos el artista a un string ---
 const unifiedPromptTemplate = (url, content) => `
     Eres un bot experto en extraer datos de eventos de flamenco.
     Tu única tarea es analizar el texto de la URL "${url}" y devolver un array JSON con los eventos futuros que encuentres.
     REGLAS ESTRICTAS:
     1. Tu respuesta DEBE ser exclusivamente un array JSON válido. No incluyas texto, comentarios, ni la palabra "json".
     2. Incluye solo eventos futuros (posteriores a la fecha de hoy).
-    3. El formato de cada objeto debe ser: { "id": "slug-unico", "name": "Nombre", "artist": { "name": "Artista Principal", "role": "ROL DEL ARTISTA (e.g., Cantaor, Bailaor, Guitarrista)" }, "description": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "provincia": "Provincia", "country": "País", "verified": false, "sourceUrl": "${url}" }.
+    3. El formato de cada objeto debe ser: { "id": "slug-unico", "name": "Nombre", "artist": "Nombre del Artista", "description": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "provincia": "Provincia", "country": "País", "verified": false, "sourceUrl": "${url}" }.
     4. Asegúrate de que todos los strings dentro del JSON están correctamente escapados.
     5. Si no encuentras ningún evento futuro válido, devuelve un array JSON vacío: [].
     Texto a analizar:
@@ -91,7 +87,7 @@ const correctionPromptTemplate = (brokenJson, errorMessage) => `
 
 // Lógica de extracción con IA (con auto-corrección)
 async function extractEventDataFromURL(url, retries = 3) {
-    console.log(`     -> 🤖 Analizando con IA (modelo Pro): ${url}`);
+    console.log(`     -> 🤖 Analizando con IA (modelo Flash): ${url}`);
     try {
         const pageResponse = await axios.get(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -99,7 +95,7 @@ async function extractEventDataFromURL(url, retries = 3) {
         });
         const cleanedContent = cleanHtmlAndExtractText(pageResponse.data);
         const prompt = unifiedPromptTemplate(url, cleanedContent);
-        console.log(`       -> 🤖 Llamando a Gemini para extraer datos de eventos...`);
+        console.log(`      -> 🤖 Llamando a Gemini para extraer datos de eventos...`);
 
         const result = await model.generateContent(prompt);
         let responseText = result.response.text();
@@ -107,7 +103,7 @@ async function extractEventDataFromURL(url, retries = 3) {
         try {
             events = JSON.parse(responseText);
         } catch (e) {
-            console.warn(`     -> ⚠️ El JSON inicial no es válido (${e.message}). Intentando auto-corrección...`);
+            console.warn(`    -> ⚠️ El JSON inicial no es válido (${e.message}). Intentando auto-corrección...`);
             const correctionPrompt = correctionPromptTemplate(responseText, e.message);
             const correctedResult = await model.generateContent(correctionPrompt);
             responseText = correctedResult.response.text();
@@ -122,8 +118,14 @@ async function extractEventDataFromURL(url, retries = 3) {
             console.log(`     -> ✅ Éxito: La IA ha extraído ${events.length} evento(s).`);
             return events.map(event => {
                 const mappedEvent = { ...event };
-                if (mappedEvent.country && mappedEvent.country.toLowerCase() === 'españa' && mappedEvent.city && !mappedEvent.provincia) {
+                if (mappedEvent.city && !mappedEvent.provincia) {
                     mappedEvent.provincia = cityToProvinceMap[mappedEvent.city.toLowerCase()] || null;
+                }
+                // Validar que el artista sea un string y no un objeto.
+                if (mappedEvent.artist && typeof mappedEvent.artist !== 'string') {
+                    console.warn(`    -> ⚠️ El artista no es un string. Intentando corregir...`);
+                    // Intentamos obtener el nombre del artista si es un objeto
+                    mappedEvent.artist = mappedEvent.artist.name || 'Artista desconocido';
                 }
                 return mappedEvent;
             });
@@ -131,11 +133,11 @@ async function extractEventDataFromURL(url, retries = 3) {
         return [];
     } catch (error) {
         if ((error.message.includes('429') || (error.response && error.response.status === 429)) && retries > 0) {
-            console.warn(`     -> ⏳ ERROR 429: Cuota de Gemini excedida. Pausando 60 segundos...`);
+            console.warn(`    -> ⏳ ERROR 429: Cuota de Gemini excedida. Pausando 60 segundos...`);
             await delay(60000);
             return extractEventDataFromURL(url, retries - 1);
         } else {
-            console.error(`     -> ❌ Error en el proceso de IA para ${url}:`, error.message);
+            console.error(`    -> ❌ Error en el proceso de IA para ${url}:`, error.message);
             return [];
         }
     }
@@ -143,7 +145,7 @@ async function extractEventDataFromURL(url, retries = 3) {
 
 
 // ==================================================================
-// --- INICIO: NUEVA FUNCIÓN DE INGESTA DE ARTISTAS ---
+// --- INICIO: FUNCIÓN DE INGESTA DE ARTISTAS ---
 // ==================================================================
 
 /**
@@ -157,23 +159,23 @@ async function findAndIngestNewArtists(scrapedEvents, db) {
     const artistsCollection = db.collection(artistsCollectionName);
     let newArtistsCount = 0;
 
-    // Usamos un Map para procesar cada artista solo una vez, incluso si aparece en múltiples eventos del mismo scrape.
     const uniqueArtists = new Map();
     for (const event of scrapedEvents) {
-        // Verificamos que el artista sea un objeto con 'name' y 'role'
-        if (event.artist && typeof event.artist === 'object' && event.artist.name && event.artist.role) {
-            const artistKey = event.artist.name.toLowerCase();
+        // MODIFICADO: Ahora el artista es un string.
+        if (event.artist && typeof event.artist === 'string' && event.artist.trim() !== '') {
+            const artistKey = event.artist.trim().toLowerCase();
             if (!uniqueArtists.has(artistKey)) {
                 uniqueArtists.set(artistKey, {
-                    name: event.artist.name.trim(),
-                    role: event.artist.role.trim()
+                    name: artistKey,
+                    // No podemos obtener el rol de un string, se mantendrá sin rol
+                    role: null
                 });
             }
         }
     }
 
     if (uniqueArtists.size === 0) {
-        console.log('No se encontraron nuevos artistas con rol identificado en este lote de eventos.');
+        console.log('No se encontraron nuevos artistas en este lote de eventos.');
         return;
     }
 
@@ -193,12 +195,12 @@ async function findAndIngestNewArtists(scrapedEvents, db) {
                     status: 'pending_review',
                     createdAt: new Date(),
                     updatedAt: new Date(),
-                    lastScrapedAt: null // Lo ponemos a null para que sea candidato a búsqueda pronto
+                    lastScrapedAt: null
                 };
 
                 await artistsCollection.insertOne(newArtistDocument);
                 newArtistsCount++;
-                console.log(`✅ Nuevo artista añadido a la BD: ${artist.name} (${artist.role})`);
+                console.log(`✅ Nuevo artista añadido a la BD: ${artist.name}`);
             } else {
                 console.log(`- Artista ya existente, omitiendo: ${artist.name}`);
             }
@@ -211,7 +213,7 @@ async function findAndIngestNewArtists(scrapedEvents, db) {
 }
 
 // ==================================================================
-// --- FIN: NUEVA FUNCIÓN DE INGESTA DE ARTISTAS ---
+// --- FIN: FUNCIÓN DE INGESTA DE ARTISTAS ---
 // ==================================================================
 
 
@@ -252,9 +254,9 @@ async function runScraper() {
                 const response = await axios.get(searchUrl);
                 const searchResults = response.data.items || [];
                 console.log(` -> Encontrados ${searchResults.length} resultados en Google.`);
-                const limitedResults = searchResults.slice(0, 1);
-                console.log(` -> Procesando solo el primer resultado para optimizar.`);
-                for (const result of limitedResults) {
+
+                // MODIFICADO: Procesamos todos los resultados, no solo el primero
+                for (const result of searchResults) {
                     const title = result.title.toLowerCase();
                     const snippet = result.snippet.toLowerCase();
                     const artistNameLower = artist.name.toLowerCase();
@@ -267,7 +269,7 @@ async function runScraper() {
                                     const imageUrl = result.pagemap?.cse_image?.[0]?.src || null;
                                     event.imageUrl = imageUrl;
                                     if (imageUrl) {
-                                        console.log(`   -> 🖼️ Imagen encontrada: ${imageUrl}`);
+                                        console.log(`     -> 🖼️ Imagen encontrada: ${imageUrl}`);
                                     }
                                     allNewEvents.push(event);
                                 }
@@ -292,17 +294,10 @@ async function runScraper() {
 
         if (allNewEvents.length > 0) {
             console.log("Guardando eventos encontrados en la colección temporal...");
-            await tempCollection.deleteMany({}); // Limpiamos la colección temporal antes de insertar
+            // Aseguramos que la colección temporal esté vacía para evitar duplicados en la ingesta
+            await tempCollection.deleteMany({});
             await tempCollection.insertMany(allNewEvents);
             console.log(`✅ ${allNewEvents.length} eventos guardados con éxito en la colección '${tempCollectionName}'.`);
-
-            // ==================================================================
-            // --- INICIO: LLAMADA A LA NUEVA LÓGICA DE INGESTA DE ARTISTAS ---
-            // ==================================================================
-            await findAndIngestNewArtists(allNewEvents, database);
-            // ==================================================================
-            // --- FIN: LLAMADA A LA NUEVA LÓGICA ---
-            // ==================================================================
 
         } else {
             console.log("No se encontraron eventos nuevos en esta ejecución.");
@@ -321,7 +316,6 @@ async function runScraper() {
 // -------------------------------------------------------------
 module.exports = async (req, res) => {
     try {
-        // Doble verificación de variables por si el script se ejecuta directamente
         const mongoUri = process.env.MONGO_URI;
         const googleApiKey = process.env.GOOGLE_API_KEY;
         const googleCx = process.env.GOOGLE_CX;
@@ -331,9 +325,7 @@ module.exports = async (req, res) => {
             throw new Error('Faltan variables de entorno críticas.');
         }
 
-        // Ejecutamos el scraper principal
         await runScraper();
-
         res.status(200).send('Ojeador ejecutado con éxito.');
     } catch (error) {
         console.error('Error fatal en el handler de Vercel:', error.message);
