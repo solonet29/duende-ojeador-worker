@@ -11,14 +11,6 @@
         {
             "path": "/api/processArtist",
             "schedule": "* * * * *"
-        },
-        {
-            "path": "/api/ingesta",
-            "schedule": "30 8,14,20 * * *"
-        },
-        {
-            "path": "/api/content-creator",
-            "schedule": "0 9,15,21 * * *"
         }
     ]
 }
