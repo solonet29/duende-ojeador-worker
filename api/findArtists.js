@@ -140,5 +140,5 @@ module.exports = async (req, res) => {
     }
 };
 
-// Para ejecutar localmente (descomentar si es necesario)
+// Para ejecutar en localmente (descomentar si es necesario)
 // findNewArtists();
