@@ -1,0 +1,16 @@
+name: Descubridor de Nuevos Artistas
+
+on:
+  schedule:
+    # Se ejecuta todos los días a las 4:00 AM (UTC)
+    - cron: '0 4 * * *'
+  workflow_dispatch: # Permite ejecutarlo manualmente desde GitHub
+
+jobs:
+  trigger-artist-discovery:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Llamar al endpoint de descubrimiento de artistas
+        run: |
+          # Usamos --fail para que el workflow falle si la API devuelve un error
+          curl --fail -X GET "https://duende-ojeador-worker.vercel.app/api/findArtists"
