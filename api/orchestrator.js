@@ -74,7 +74,7 @@ async function findAndProcessEvents() {
 
         // 1. Obtener un lote de artistas que no han sido revisados recientemente
         const artistsToSearch = await artistsCollection.find({
-            status: 'approved' // O el estado que uses para artistas activos
+            status: 'pending_review' // Procesamos los artistas pendientes de revisión
         }).sort({ lastScrapedAt: 1 }).limit(BATCH_SIZE).toArray();
 
         if (artistsToSearch.length === 0) {
