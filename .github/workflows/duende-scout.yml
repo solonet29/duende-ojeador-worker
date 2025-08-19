@@ -1,0 +1,15 @@
+name: Disparador del Ojeador de Duendes
+
+on:
+  schedule:
+    # Ejecuta el workflow cada 15 minutos
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Permite ejecutarlo manualmente desde GitHub
+
+jobs:
+  trigger-scout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Llamar al endpoint del orquestador
+        run: |
+          curl -X GET "https://duende-ojeador-worker.vercel.app/api/orchestrator"
