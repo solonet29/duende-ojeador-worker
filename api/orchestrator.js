@@ -1,69 +1,58 @@
-// api/orchestrator.js
-// Reemplaza a findEvents.js y processArtist.js con un único endpoint robusto.
+// /api/orchestrator.js - Versión Final
+// Misión: Encontrar eventos para artistas existentes de forma rotativa.
+
 require('dotenv').config();
-const { MongoClient, ObjectId } = require('mongodb');
-const axios = require('axios');
-const cheerio = require('cheerio');
+const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { google } = require('googleapis');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 // --- Configuración ---
 const mongoUri = process.env.MONGO_URI;
 const dbName = process.env.DB_NAME || 'DuendeDB';
 const artistsCollectionName = 'artists';
-const eventsCollectionName = 'events';
+const eventsCollectionName = 'events'; // Colección final de eventos
 
 const googleApiKey = process.env.GOOGLE_API_KEY;
-const customSearchEngineId = process.env.CUSTOM_SEARCH_ENGINE_ID;
+const customSearchEngineId = process.env.GOOGLE_CX;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
-const customsearch = google.customsearch('v1');
+if (!mongoUri || !geminiApiKey || !googleApiKey || !customSearchEngineId) {
+    throw new Error('Faltan variables de entorno críticas.');
+}
+
+// --- Inicialización de Servicios ---
 const genAI = new GoogleGenerativeAI(geminiApiKey);
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const geminiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash', generationConfig: { responseMimeType: 'application/json' } });
+const customsearch = google.customsearch('v1');
 
-const BATCH_SIZE = 5; // Procesar 5 artistas por ejecución para no exceder timeouts
+const BATCH_SIZE = 15; // Límite de artistas a procesar por ejecución.
 
-// --- Lógica de Limpieza y Extracción con IA ---
+// --- Prompt para Gemini (Refinado) ---
+const eventExtractionPrompt = (artistName, url, content) => `
+    Analiza el siguiente contenido de la URL "${url}" y extrae eventos futuros del artista "${artistName}".
+    Devuelve un array JSON de objetos.
+    REGLAS ESTRICTAS:
+    1. Tu respuesta DEBE ser exclusivamente un array JSON válido.
+    2. El formato de cada objeto es: { "name": "Nombre del Evento", "description": "Descripción breve", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "country": "País", "sourceUrl": "${url}" }.
+    3. Extrae solo eventos futuros. Ignora fechas pasadas.
+    4. Si no encuentras eventos, devuelve un array vacío: [].
+    Contenido a analizar:
+    ${content}
+`;
 
 function cleanHtmlForGemini(html) {
     const $ = cheerio.load(html);
-    $('script, style, nav, footer, header, aside, form').remove();
+    $('script, style, nav, footer, header, aside').remove();
     return $('body').text().replace(/\s\s+/g, ' ').trim().substring(0, 15000);
 }
 
-function eventExtractionPrompt(artistName, pageContent) {
-    return `
-    Analiza el siguiente contenido de una página web y extrae CUALQUIER evento o concierto del artista "${artistName}".
-    Devuelve los resultados como un array de objetos JSON. Cada objeto debe tener la siguiente estructura:
-    {
-      "eventName": "Nombre del evento o gira (si se menciona)",
-      "artistName": "${artistName}",
-      "date": "Fecha del evento en formato ISO 8601 (YYYY-MM-DDTHH:mm:ss.sssZ). Si no hay hora, usa el mediodía. Si no hay fecha, déjalo null.",
-      "venue": "Lugar o recinto del evento",
-      "city": "Ciudad",
-      "country": "País",
-      "ticketUrl": "URL directa para comprar entradas (si la encuentras)"
-    }
-
-    REGLAS IMPORTANTES:
-    1.  Extrae solo eventos futuros. Ignora fechas pasadas.
-    2.  Si no encuentras ningún evento, devuelve un array vacío: [].
-    3.  No inventes datos. Si un campo no está disponible, déjalo en null.
-    4.  El resultado DEBE ser un JSON válido.
-
-    Contenido a analizar:
-    ${pageContent}
-    `;
-}
-
-
-// --- Lógica Principal del Orquestador ---
-
+// --- Flujo Principal del Orquestador ---
 async function findAndProcessEvents() {
     console.log(`🚀 Orquestador iniciado. Buscando lote de ${BATCH_SIZE} artistas.`);
     const client = new MongoClient(mongoUri);
-    let processedArtists = 0;
-    let totalNewEvents = 0;
+    let totalNewEventsCount = 0;
 
     try {
         await client.connect();
@@ -72,34 +61,31 @@ async function findAndProcessEvents() {
         const eventsCollection = db.collection(eventsCollectionName);
         console.log("✅ Conectado a MongoDB.");
 
-        // 1. Obtener un lote de artistas que no han sido revisados recientemente
-        const artistsToSearch = await artistsCollection.find({
-            status: 'pending_review' // Procesamos los artistas pendientes de revisión
-        }).sort({ lastScrapedAt: 1 }).limit(BATCH_SIZE).toArray();
+        // --- CAMBIO: Consulta de artistas simplificada y enfocada en la rotación ---
+        const artistsToSearch = await artistsCollection
+            .find({})
+            .sort({ lastScrapedAt: 1 }) // Ordena por fecha: los más antiguos y los nuevos (null) primero
+            .limit(BATCH_SIZE)
+            .toArray();
 
         if (artistsToSearch.length === 0) {
-            console.log("📪 No hay artistas que necesiten ser procesados ahora mismo.");
+            console.log("📪 No hay artistas que necesiten ser procesados.");
             return;
         }
-
         console.log(`🔍 Lote de ${artistsToSearch.length} artistas obtenido. Empezando procesamiento...`);
 
         for (const artist of artistsToSearch) {
-            console.log(`
----------------------------------
-🎤 Procesando a: ${artist.name}`);
+            console.log(`\n---------------------------------\n🎤 Procesando a: ${artist.name}`);
+            let eventsFoundForArtist = [];
             const searchQueries = [
-                `"${artist.name}" "conciertos" "gira" "entradas"`,
-                `"${artist.name}" "agenda" "actuaciones"`
+                `concierto flamenco "${artist.name}" 2025`,
+                `"${artist.name}" entradas gira`
             ];
-
-            let foundEvents = [];
 
             for (const query of searchQueries) {
                 try {
                     const searchRes = await customsearch.cse.list({ cx: customSearchEngineId, q: query, auth: googleApiKey, num: 3 });
                     const searchResults = searchRes.data.items || [];
-
                     for (const result of searchResults) {
                         try {
                             console.log(`   -> Analizando URL: ${result.link}`);
@@ -108,63 +94,60 @@ async function findAndProcessEvents() {
 
                             if (cleanedContent.length < 100) continue;
 
-                            const prompt = eventExtractionPrompt(artist.name, cleanedContent);
+                            const prompt = eventExtractionPrompt(artist.name, result.link, cleanedContent);
                             const geminiResult = await geminiModel.generateContent(prompt);
                             const responseText = geminiResult.response.text();
                             const eventsFromPage = JSON.parse(responseText);
 
                             if (eventsFromPage.length > 0) {
                                 console.log(`   ✨ La IA encontró ${eventsFromPage.length} posibles eventos.`);
-                                foundEvents.push(...eventsFromPage);
+                                eventsFoundForArtist.push(...eventsFromPage.map(e => ({ ...e, artist: artist.name })));
                             }
                         } catch (error) {
-                            console.error(`   ❌ Error procesando ${result.link}: ${error.message.substring(0, 100)}`);
+                            console.error(`   ❌ Error procesando ${result.link}: ${error.message.substring(0, 150)}`);
                         }
                     }
                 } catch (searchError) {
-                     console.error(`   ❌ Error en la búsqueda de Google para "${query}": ${searchError.message}`);
+                    console.error(`   ❌ Error en la búsqueda de Google para "${query}": ${searchError.message}`);
                 }
             }
 
-            // 2. Insertar eventos nuevos en la base de datos, evitando duplicados
-            if (foundEvents.length > 0) {
-                const uniqueEvents = [...new Map(foundEvents.map(e => [e.date + e.venue + e.city, e])).values()];
+            let newEventsForArtistCount = 0;
+            if (eventsFoundForArtist.length > 0) {
+                const uniqueEvents = [...new Map(eventsFoundForArtist.map(e => [e.date + e.venue, e])).values()];
+
                 for (const event of uniqueEvents) {
-                    // Comprobar si un evento muy similar ya existe
+                    // --- CAMBIO: Comprobación de duplicados más robusta ---
                     const existingEvent = await eventsCollection.findOne({
-                        artistName: event.artistName,
+                        artist: event.artist,
                         venue: event.venue,
-                        city: event.city,
-                        date: event.date ? new Date(event.date) : null
+                        date: event.date
                     });
 
-                    if (!existingEvent) {
-                        const newEvent = {
+                    if (!existingEvent && event.date) {
+                        const newEventDoc = {
                             ...event,
-                            artistId: artist._id,
-                            date: event.date ? new Date(event.date) : null,
-                            status: 'published',
+                            id: `evt-${event.artist.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${event.date}`,
+                            verified: false,
+                            contentStatus: 'pending', // Listo para el Creador de Contenidos
                             createdAt: new Date(),
-                            updatedAt: new Date()
+                            updatedAt: new Date(),
                         };
-                        await eventsCollection.insertOne(newEvent);
-                        totalNewEvents++;
+                        await eventsCollection.insertOne(newEventDoc);
+                        newEventsForArtistCount++;
                     }
                 }
             }
-             console.log(`   ✅ Eventos encontrados para ${artist.name}: ${foundEvents.length}. Nuevos añadidos: ${totalNewEvents}`);
+            console.log(`   ✅ Procesamiento para ${artist.name} finalizado. Nuevos eventos añadidos: ${newEventsForArtistCount}`);
+            totalNewEventsCount += newEventsForArtistCount;
 
-
-            // 3. Actualizar la fecha de 'lastScrapedAt' para el artista
+            // Actualizar la fecha de 'lastScrapedAt' para el artista
             await artistsCollection.updateOne(
                 { _id: artist._id },
                 { $set: { lastScrapedAt: new Date() } }
             );
-            processedArtists++;
         }
-
-        console.log(`
-🎉 Orquestador finalizado. Artistas procesados: ${processedArtists}. Total de nuevos eventos añadidos: ${totalNewEvents}.`);
+        console.log(`\n🎉 Orquestador finalizado. Total de nuevos eventos añadidos en esta ejecución: ${totalNewEventsCount}.`);
 
     } catch (error) {
         console.error("💥 Error fatal en el Orquestador:", error);
@@ -176,12 +159,6 @@ async function findAndProcessEvents() {
 
 // Endpoint para Vercel
 module.exports = async (req, res) => {
-    // Puedes añadir una clave secreta para proteger el endpoint si quieres
-    // const { authorization } = req.headers;
-    // if (authorization !== `Bearer ${process.env.CRON_SECRET}`) {
-    //     return res.status(401).send('Unauthorized');
-    // }
-
     try {
         await findAndProcessEvents();
         res.status(200).send('Orquestador ejecutado con éxito.');
