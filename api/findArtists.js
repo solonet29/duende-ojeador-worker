@@ -63,7 +63,17 @@ async function findNewArtists() {
         await client.connect();
         const db = client.db(dbName);
         const artistsCollection = db.collection(artistsCollectionName);
-        console.log("✅ Conectado a MongoDB.");
+
+        // --- ASEGURAR ÍNDICE ---
+        console.log("🔧 Asegurando que el índice 'name' exista en la colección de artistas...");
+        await artistsCollection.createIndex(
+            { name: 1 },
+            { unique: true, collation: { locale: 'es', strength: 2 } }
+        );
+        // --------------------
+
+        console.log("✅ Conectado a MongoDB y con el índice asegurado.");
+
 
         let allFoundArtists = [];
 
@@ -98,29 +108,46 @@ async function findNewArtists() {
         console.log(`\n---------------------------------\n🎉 Descubrimiento finalizado. Total de artistas encontrados: ${allFoundArtists.length}`);
         if (allFoundArtists.length === 0) return;
 
-        // --- Ingesta en la Base de Datos ---
+        // --- Ingesta en la Base de Datos (Versión Optimizada) ---
         let newArtistsCount = 0;
         const uniqueArtists = [...new Map(allFoundArtists.map(item => [item.name.toLowerCase(), item])).values()];
+        
+        // 1. Obtenemos solo los nombres de los artistas encontrados
+        const foundArtistNames = uniqueArtists.map(artist => new RegExp(`^${artist.name.trim()}, 'i'));
 
+        // 2. Hacemos UNA SOLA consulta a la BD para encontrar cuáles de esos nombres YA EXISTEN
+        const existingArtistsCursor = artistsCollection.find({ name: { $in: foundArtistNames } });
+        const existingArtists = await existingArtistsCursor.toArray();
+        const existingArtistNamesSet = new Set(existingArtists.map(artist => artist.name.toLowerCase()));
+
+        // 3. Comparamos en memoria (mucho más rápido)
+        const artistsToInsert = [];
         for (const artist of uniqueArtists) {
             if (!artist.name || typeof artist.name !== 'string') continue;
 
-            const existingArtist = await artistsCollection.findOne({ name: { $regex: new RegExp(`^${artist.name.trim()}$`, 'i') } });
-            if (!existingArtist) {
-                const newArtistDoc = {
+            if (!existingArtistNamesSet.has(artist.name.trim().toLowerCase())) {
+                artistsToInsert.push({
                     name: artist.name.trim(),
                     mainRole: artist.mainRole || 'Desconocido',
                     genres: ['Flamenco'],
                     status: 'pending_review',
                     createdAt: new Date(),
                     updatedAt: new Date(),
-                    lastScrapedAt: null // Nulo para que el Vigilante lo coja pronto
-                };
-                await artistsCollection.insertOne(newArtistDoc);
-                newArtistsCount++;
+                    lastScrapedAt: null
+                });
+                // Para no añadir duplicados de la misma ejecución
+                existingArtistNamesSet.add(artist.name.trim().toLowerCase()); 
             }
         }
+
+        // 4. Hacemos UNA SOLA operación de inserción múltiple si hay artistas que añadir
+        if (artistsToInsert.length > 0) {
+            await artistsCollection.insertMany(artistsToInsert);
+            newArtistsCount = artistsToInsert.length;
+        }
+
         console.log(`✅ ${newArtistsCount} nuevos artistas han sido añadidos a la base de datos para su revisión.`);
+
 
     } catch (error) {
         console.error("💥 Error fatal en el Ojeador:", error);

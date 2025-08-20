@@ -5,7 +5,8 @@
   "main": "api/getArtists.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node api/getArtists.js"
+    "start": "node api/getArtists.js",
+    "dev": "node api/findArtists.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.15.0",
