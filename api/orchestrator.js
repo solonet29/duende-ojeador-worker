@@ -1,4 +1,4 @@
-// /api/orchestrator.js - Versión Final Mejorada
+// /api/orchestrator.js - Versión Final Mejorada (Estrategia 3)
 // Misión: Encontrar eventos para artistas existentes de forma rotativa.
 
 require('dotenv').config();
@@ -70,9 +70,6 @@ function cleanHtmlForGemini(html) {
 
 // --- CAMBIO CLAVE: Lógica de búsqueda en cascada y por categorías ---
 const searchQueries = (artistName) => ({
-    entradas: [
-        `"${artistName}" "entradas" "concierto" site:ticketmaster.es OR site:elcorteingles.es OR site:entradas.com OR site:dice.fm OR site:seetickets.com`
-    ],
     redes_sociales: [
         `"${artistName}" "eventos" site:facebook.com`,
         `"${artistName}" "próximos conciertos" site:instagram.com`,
@@ -82,6 +79,9 @@ const searchQueries = (artistName) => ({
         `"${artistName}" "agenda" "conciertos"`,
         `"${artistName}" "fechas gira"`,
         `"${artistName}" "próximos eventos"`
+    ],
+    entradas: [
+        `"${artistName}" "entradas" "concierto" site:ticketmaster.es OR site:elcorteingles.es OR site:entradas.com OR site:dice.fm OR site:seetickets.com`
     ]
 });
 
@@ -115,8 +115,8 @@ async function findAndProcessEvents() {
             let eventsFoundForArtist = [];
             const queriesForArtist = searchQueries(artist.name);
 
-            // --- Bucle de búsqueda en cascada ---
-            for (const category of ['entradas', 'redes_sociales', 'descubrimiento']) {
+            // --- Bucle de búsqueda en cascada (nuevo orden) ---
+            for (const category of ['redes_sociales', 'descubrimiento', 'entradas']) {
                 console.log(`   -> Iniciando búsqueda por categoría: "${category}"`);
 
                 const currentQueries = queriesForArtist[category];
@@ -130,7 +130,7 @@ async function findAndProcessEvents() {
                             try {
                                 const url = result.link;
                                 const domainsToAvoid = ['tripadvisor', 'gamefaqs', 'repec', 'wikipedia'];
-                                // Eliminamos de la lista de evitación las redes sociales, ya que ahora las buscamos intencionadamente
+                                // Mantenemos esta lista para evitar dominios irrelevantes
                                 if (domainsToAvoid.some(domain => url.includes(domain))) {
                                     console.log(`   -> 🟡 URL descartada por dominio no relevante: ${url}`);
                                     continue;
