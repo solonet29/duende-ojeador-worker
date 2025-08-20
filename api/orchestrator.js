@@ -1,4 +1,4 @@
-// /api/orchestrator.js - Versión Final Mejorada (Estrategia 3)
+// /api/orchestrator.js - Versión Final Mejorada (Depuración de Inserción)
 // Misión: Encontrar eventos para artistas existentes de forma rotativa.
 
 require('dotenv').config();
@@ -68,7 +68,7 @@ function cleanHtmlForGemini(html) {
     return $('body').text().replace(/\s\s+/g, ' ').trim().substring(0, 15000);
 }
 
-// --- CAMBIO CLAVE: Lógica de búsqueda en cascada y por categorías ---
+// --- Lógica de búsqueda en cascada y por categorías ---
 const searchQueries = (artistName) => ({
     redes_sociales: [
         `"${artistName}" "eventos" site:facebook.com`,
@@ -115,7 +115,7 @@ async function findAndProcessEvents() {
             let eventsFoundForArtist = [];
             const queriesForArtist = searchQueries(artist.name);
 
-            // --- Bucle de búsqueda en cascada (nuevo orden) ---
+            // --- Bucle de búsqueda en cascada ---
             for (const category of ['redes_sociales', 'descubrimiento', 'entradas']) {
                 console.log(`   -> Iniciando búsqueda por categoría: "${category}"`);
 
@@ -130,7 +130,6 @@ async function findAndProcessEvents() {
                             try {
                                 const url = result.link;
                                 const domainsToAvoid = ['tripadvisor', 'gamefaqs', 'repec', 'wikipedia'];
-                                // Mantenemos esta lista para evitar dominios irrelevantes
                                 if (domainsToAvoid.some(domain => url.includes(domain))) {
                                     console.log(`   -> 🟡 URL descartada por dominio no relevante: ${url}`);
                                     continue;
@@ -163,7 +162,6 @@ async function findAndProcessEvents() {
                         console.error(`   ❌ Error en la búsqueda de Google para "${query}": ${searchError.message}`);
                     }
                 }
-                // Si encontramos al menos un evento en la categoría actual, salimos del bucle de categorías
                 if (eventsFoundForArtist.length > 0) {
                     console.log(`   ✅ Se encontraron eventos en la categoría "${category}". Pasando al siguiente artista.`);
                     break;
@@ -173,16 +171,29 @@ async function findAndProcessEvents() {
 
             let newEventsForArtistCount = 0;
             if (eventsFoundForArtist.length > 0) {
+                // --- CAMBIO: Depuración de la lógica de duplicados y validación ---
+                console.log(`\n🕵️‍♂️ Depurando la inserción de eventos. Eventos brutos encontrados: ${eventsFoundForArtist.length}`);
+
                 const uniqueEvents = [...new Map(eventsFoundForArtist.map(e => [e.date + e.venue, e])).values()];
 
+                console.log(`Eventos únicos después del filtrado: ${uniqueEvents.length}`);
+
                 for (const event of uniqueEvents) {
+                    // Validamos que el evento tenga los campos mínimos necesarios
+                    if (!event.name || !event.date || !event.venue) {
+                        console.log(`   ⚠️ Evento omitido por datos incompletos:`, event);
+                        continue; // Salta a la siguiente iteración si falta data
+                    }
+
+                    // Buscamos duplicados con los campos clave
+                    console.log("   Buscando duplicado para:", event.artist, event.venue, event.date);
                     const existingEvent = await eventsCollection.findOne({
                         artist: event.artist,
                         venue: event.venue,
                         date: event.date
                     });
 
-                    if (!existingEvent && event.date) {
+                    if (!existingEvent) {
                         const newEventDoc = {
                             ...event,
                             id: `evt-${event.artist.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${event.date}`,
@@ -193,6 +204,9 @@ async function findAndProcessEvents() {
                         };
                         await eventsCollection.insertOne(newEventDoc);
                         newEventsForArtistCount++;
+                        console.log(`   ✅ Evento nuevo añadido: ${newEventDoc.name}`);
+                    } else {
+                        console.log(`   🟡 Evento duplicado, omitido: ${event.name}`);
                     }
                 }
             }
