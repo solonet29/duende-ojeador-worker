@@ -1,4 +1,4 @@
-// /api/orchestrator.js - Versión Final
+// /api/orchestrator.js - Versión Final Mejorada
 // Misión: Encontrar eventos para artistas existentes de forma rotativa.
 
 require('dotenv').config();
@@ -12,7 +12,7 @@ const cheerio = require('cheerio');
 const mongoUri = process.env.MONGO_URI;
 const dbName = process.env.DB_NAME || 'DuendeDB';
 const artistsCollectionName = 'artists';
-const eventsCollectionName = 'events'; // Colección final de eventos
+const eventsCollectionName = 'events';
 
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const customSearchEngineId = process.env.GOOGLE_CX;
@@ -29,9 +29,9 @@ const customsearch = google.customsearch('v1');
 
 const BATCH_SIZE = 15; // Límite de artistas a procesar por ejecución.
 
-// --- Prompt para Gemini (Refinado) ---
+// --- PROMPT PARA GEMINI (Refinado) ---
 const eventExtractionPrompt = (artistName, url, content) => {
-    const currentYear = new Date().getFullYear(); // Obtenemos el año actual dinámicamente
+    const currentYear = new Date().getFullYear();
 
     return `
     Tu tarea es actuar como un asistente experto en extracción de datos de eventos musicales.
@@ -68,6 +68,23 @@ function cleanHtmlForGemini(html) {
     return $('body').text().replace(/\s\s+/g, ' ').trim().substring(0, 15000);
 }
 
+// --- CAMBIO CLAVE: Lógica de búsqueda en cascada y por categorías ---
+const searchQueries = (artistName) => ({
+    entradas: [
+        `"${artistName}" "entradas" "concierto" site:ticketmaster.es OR site:elcorteingles.es OR site:entradas.com OR site:dice.fm OR site:seetickets.com`
+    ],
+    redes_sociales: [
+        `"${artistName}" "eventos" site:facebook.com`,
+        `"${artistName}" "próximos conciertos" site:instagram.com`,
+        `"${artistName}" "agenda" site:twitter.com`
+    ],
+    descubrimiento: [
+        `"${artistName}" "agenda" "conciertos"`,
+        `"${artistName}" "fechas gira"`,
+        `"${artistName}" "próximos eventos"`
+    ]
+});
+
 // --- Flujo Principal del Orquestador ---
 async function findAndProcessEvents() {
     console.log(`🚀 Orquestador iniciado. Buscando lote de ${BATCH_SIZE} artistas.`);
@@ -81,10 +98,9 @@ async function findAndProcessEvents() {
         const eventsCollection = db.collection(eventsCollectionName);
         console.log("✅ Conectado a MongoDB.");
 
-        // --- CAMBIO: Consulta de artistas simplificada y enfocada en la rotación ---
         const artistsToSearch = await artistsCollection
             .find({})
-            .sort({ lastScrapedAt: 1 }) // Ordena por fecha: los más antiguos y los nuevos (null) primero
+            .sort({ lastScrapedAt: 1 })
             .limit(BATCH_SIZE)
             .toArray();
 
@@ -97,56 +113,69 @@ async function findAndProcessEvents() {
         for (const artist of artistsToSearch) {
             console.log(`\n---------------------------------\n🎤 Procesando a: ${artist.name}`);
             let eventsFoundForArtist = [];
-            const searchQueries = [
-                `"${artist.name}" "entradas" "concierto" site:ticketmaster.es OR site:elcorteingles.es OR site:entradas.com OR site:dice.fm OR site:seetickets.com`
-            ];
+            const queriesForArtist = searchQueries(artist.name);
 
-            for (const query of searchQueries) {
-                try {
-                    const searchRes = await customsearch.cse.list({ cx: customSearchEngineId, q: query, auth: googleApiKey, num: 3 });
-                    const searchResults = searchRes.data.items || [];
-                    for (const result of searchResults) {
-                        try {
-                            // --- NUEVO: Filtro de URLs para descartar "basura" antes de llamar a la IA ---
-                            const url = result.link;
-                            const domainsToAvoid = ['tripadvisor', 'gamefaqs', 'repec', 'wikipedia', 'facebook', 'instagram', 'twitter'];
+            // --- Bucle de búsqueda en cascada ---
+            for (const category of ['entradas', 'redes_sociales', 'descubrimiento']) {
+                console.log(`   -> Iniciando búsqueda por categoría: "${category}"`);
 
-                            if (domainsToAvoid.some(domain => url.includes(domain))) {
-                                console.log(`   -> 🟡 URL descartada por dominio no relevante: ${url}`);
-                                continue; // Salta a la siguiente URL sin gastar en la IA
+                const currentQueries = queriesForArtist[category];
+                for (const query of currentQueries) {
+                    try {
+                        const searchRes = await customsearch.cse.list({ cx: customSearchEngineId, q: query, auth: googleApiKey, num: 3 });
+                        const searchResults = searchRes.data.items || [];
+                        console.log(`   -> Resultados de búsqueda para "${query}": ${searchResults.length}`);
+
+                        for (const result of searchResults) {
+                            try {
+                                const url = result.link;
+                                const domainsToAvoid = ['tripadvisor', 'gamefaqs', 'repec', 'wikipedia'];
+                                // Eliminamos de la lista de evitación las redes sociales, ya que ahora las buscamos intencionadamente
+                                if (domainsToAvoid.some(domain => url.includes(domain))) {
+                                    console.log(`   -> 🟡 URL descartada por dominio no relevante: ${url}`);
+                                    continue;
+                                }
+
+                                console.log(`   -> Analizando URL: ${url}`);
+                                const pageResponse = await axios.get(url, { timeout: 8000 });
+                                const cleanedContent = cleanHtmlForGemini(pageResponse.data);
+
+                                if (cleanedContent.length < 100) {
+                                    console.log("   -> Contenido demasiado corto, saltando.");
+                                    continue;
+                                }
+
+                                const prompt = eventExtractionPrompt(artist.name, result.link, cleanedContent);
+                                const geminiResult = await geminiModel.generateContent(prompt);
+                                const responseText = geminiResult.response.text();
+
+                                const eventsFromPage = JSON.parse(responseText);
+
+                                if (eventsFromPage.length > 0) {
+                                    console.log(`   ✨ La IA encontró ${eventsFromPage.length} posibles eventos.`);
+                                    eventsFoundForArtist.push(...eventsFromPage.map(e => ({ ...e, artist: artist.name })));
+                                }
+                            } catch (error) {
+                                console.error(`   ❌ Error procesando ${result.link}: ${error.message.substring(0, 150)}`);
                             }
-                            // --- FIN DEL FILTRO ---
-
-                            console.log(`   -> Analizando URL: ${url}`); // Ahora usamos la variable 'url'
-                            const pageResponse = await axios.get(url, { timeout: 8000 });
-                            const cleanedContent = cleanHtmlForGemini(pageResponse.data);
-
-                            if (cleanedContent.length < 100) continue;
-
-                            const prompt = eventExtractionPrompt(artist.name, result.link, cleanedContent);
-                            const geminiResult = await geminiModel.generateContent(prompt);
-                            const responseText = geminiResult.response.text();
-                            const eventsFromPage = JSON.parse(responseText);
-
-                            if (eventsFromPage.length > 0) {
-                                console.log(`   ✨ La IA encontró ${eventsFromPage.length} posibles eventos.`);
-                                eventsFoundForArtist.push(...eventsFromPage.map(e => ({ ...e, artist: artist.name })));
-                            }
-                        } catch (error) {
-                            console.error(`   ❌ Error procesando ${result.link}: ${error.message.substring(0, 150)}`);
                         }
+                    } catch (searchError) {
+                        console.error(`   ❌ Error en la búsqueda de Google para "${query}": ${searchError.message}`);
                     }
-                } catch (searchError) {
-                    console.error(`   ❌ Error en la búsqueda de Google para "${query}": ${searchError.message}`);
+                }
+                // Si encontramos al menos un evento en la categoría actual, salimos del bucle de categorías
+                if (eventsFoundForArtist.length > 0) {
+                    console.log(`   ✅ Se encontraron eventos en la categoría "${category}". Pasando al siguiente artista.`);
+                    break;
                 }
             }
+            // --- Fin del bucle de búsqueda en cascada ---
 
             let newEventsForArtistCount = 0;
             if (eventsFoundForArtist.length > 0) {
                 const uniqueEvents = [...new Map(eventsFoundForArtist.map(e => [e.date + e.venue, e])).values()];
 
                 for (const event of uniqueEvents) {
-                    // --- CAMBIO: Comprobación de duplicados más robusta ---
                     const existingEvent = await eventsCollection.findOne({
                         artist: event.artist,
                         venue: event.venue,
@@ -158,7 +187,7 @@ async function findAndProcessEvents() {
                             ...event,
                             id: `evt-${event.artist.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${event.date}`,
                             verified: false,
-                            contentStatus: 'pending', // Listo para el Creador de Contenidos
+                            contentStatus: 'pending',
                             createdAt: new Date(),
                             updatedAt: new Date(),
                         };
@@ -167,10 +196,9 @@ async function findAndProcessEvents() {
                     }
                 }
             }
-            console.log(`   ✅ Procesamiento para ${artist.name} finalizado. Nuevos eventos añadidos: ${newEventsForArtistCount}`);
+            console.log(`   ✅ Procesamiento para ${artist.name} finalizado. Nuevos eventos añadidos: ${newEventsForArtistCount}`);
             totalNewEventsCount += newEventsForArtistCount;
 
-            // Actualizar la fecha de 'lastScrapedAt' para el artista
             await artistsCollection.updateOne(
                 { _id: artist._id },
                 { $set: { lastScrapedAt: new Date() } }
