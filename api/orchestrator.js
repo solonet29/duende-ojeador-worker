@@ -1,5 +1,5 @@
-// /api/orchestrator.js - Versión Final Mejorada (Depuración de Inserción)
-// Misión: Encontrar eventos para artistas existentes de forma rotativa.
+// /api/orchestrator.js - Versión Final y Optimizada
+// Misión: Encontrar y procesar eventos de flamenco para artistas existentes.
 
 require('dotenv').config();
 const { MongoClient } = require('mongodb');
@@ -27,15 +27,19 @@ const genAI = new GoogleGenerativeAI(geminiApiKey);
 const geminiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash', generationConfig: { responseMimeType: 'application/json' } });
 const customsearch = google.customsearch('v1');
 
-const BATCH_SIZE = 15; // Límite de artistas a procesar por ejecución.
+// --- AJUSTE CLAVE: Reducción del lote para evitar timeouts en Vercel ---
+const BATCH_SIZE = 8;
 
-// --- PROMPT PARA GEMINI (Refinado) ---
+// --- PROMPT PARA GEMINI (Optimizado para Flamenco) ---
 const eventExtractionPrompt = (artistName, url, content) => {
     const currentYear = new Date().getFullYear();
 
     return `
-    Tu tarea es actuar como un asistente experto en extracción de datos de eventos musicales.
+    Tu tarea es actuar como un asistente experto en extracción de datos de eventos de flamenco.
     Analiza el siguiente contenido de la URL "${url}" para encontrar los próximos conciertos o actuaciones en vivo del artista "${artistName}".
+
+    **REGLA ADICIONAL CLAVE:**
+    - Extrae **únicamente** eventos que estén claramente relacionados con el mundo del flamenco. Si no se menciona explícitamente el flamenco, el cante, el baile, la guitarra flamenca, o términos similares, descarta el evento.
 
     El año de referencia es ${currentYear}. Extrae únicamente eventos que ocurran en ${currentYear} o en años posteriores.
 
@@ -110,12 +114,15 @@ async function findAndProcessEvents() {
         }
         console.log(`🔍 Lote de ${artistsToSearch.length} artistas obtenido. Empezando procesamiento...`);
 
+        // Array para inserciones múltiples
+        const eventsToInsert = [];
+
         for (const artist of artistsToSearch) {
             console.log(`\n---------------------------------\n🎤 Procesando a: ${artist.name}`);
             let eventsFoundForArtist = [];
             const queriesForArtist = searchQueries(artist.name);
 
-            // --- Bucle de búsqueda en cascada ---
+            // Bucle de búsqueda en cascada
             for (const category of ['redes_sociales', 'descubrimiento', 'entradas']) {
                 console.log(`   -> Iniciando búsqueda por categoría: "${category}"`);
 
@@ -167,25 +174,20 @@ async function findAndProcessEvents() {
                     break;
                 }
             }
-            // --- Fin del bucle de búsqueda en cascada ---
 
-            let newEventsForArtistCount = 0;
             if (eventsFoundForArtist.length > 0) {
-                // --- CAMBIO: Depuración de la lógica de duplicados y validación ---
-                console.log(`\n🕵️‍♂️ Depurando la inserción de eventos. Eventos brutos encontrados: ${eventsFoundForArtist.length}`);
+                console.log(`\n🕵️‍♂️ Preparando eventos para inserción. Eventos brutos encontrados: ${eventsFoundForArtist.length}`);
 
                 const uniqueEvents = [...new Map(eventsFoundForArtist.map(e => [e.date + e.venue, e])).values()];
 
                 console.log(`Eventos únicos después del filtrado: ${uniqueEvents.length}`);
 
                 for (const event of uniqueEvents) {
-                    // Validamos que el evento tenga los campos mínimos necesarios
                     if (!event.name || !event.date || !event.venue) {
                         console.log(`   ⚠️ Evento omitido por datos incompletos:`, event);
-                        continue; // Salta a la siguiente iteración si falta data
+                        continue;
                     }
 
-                    // Buscamos duplicados con los campos clave
                     console.log("   Buscando duplicado para:", event.artist, event.venue, event.date);
                     const existingEvent = await eventsCollection.findOne({
                         artist: event.artist,
@@ -202,23 +204,28 @@ async function findAndProcessEvents() {
                             createdAt: new Date(),
                             updatedAt: new Date(),
                         };
-                        await eventsCollection.insertOne(newEventDoc);
-                        newEventsForArtistCount++;
-                        console.log(`   ✅ Evento nuevo añadido: ${newEventDoc.name}`);
+                        eventsToInsert.push(newEventDoc);
+                        console.log(`   ✅ Evento nuevo preparado para inserción: ${newEventDoc.name}`);
                     } else {
                         console.log(`   🟡 Evento duplicado, omitido: ${event.name}`);
                     }
                 }
             }
-            console.log(`   ✅ Procesamiento para ${artist.name} finalizado. Nuevos eventos añadidos: ${newEventsForArtistCount}`);
-            totalNewEventsCount += newEventsForArtistCount;
 
             await artistsCollection.updateOne(
                 { _id: artist._id },
                 { $set: { lastScrapedAt: new Date() } }
             );
         }
-        console.log(`\n🎉 Orquestador finalizado. Total de nuevos eventos añadidos en esta ejecución: ${totalNewEventsCount}.`);
+
+        // Inserción masiva al final del proceso
+        if (eventsToInsert.length > 0) {
+            await eventsCollection.insertMany(eventsToInsert);
+            totalNewEventsCount = eventsToInsert.length;
+            console.log(`\n🎉 Inserción masiva completada. Total de nuevos eventos añadidos: ${totalNewEventsCount}.`);
+        } else {
+            console.log("\n📪 No se encontraron nuevos eventos para añadir en esta ejecución.");
+        }
 
     } catch (error) {
         console.error("💥 Error fatal en el Orquestador:", error);
