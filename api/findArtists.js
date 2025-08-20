@@ -93,7 +93,16 @@ async function findNewArtists() {
                     const prompt = artistExtractionPrompt(result.link, cleanedContent);
                     const geminiResult = await geminiModel.generateContent(prompt);
                     const responseText = geminiResult.response.text();
-                    const artistsFromPage = JSON.parse(responseText);
+                    
+                    // --- FIX: Parseo de JSON robusto ---
+                    let artistsFromPage = [];
+                    try {
+                        artistsFromPage = JSON.parse(responseText);
+                    } catch (e) {
+                        console.error(`   ⚠️ Error al parsear JSON de la IA para ${result.link}. Respuesta no válida.`);
+                        continue; // Salta a la siguiente URL
+                    }
+                    // -------------------------------------
 
                     if (artistsFromPage.length > 0) {
                         console.log(`   ✨ La IA encontró ${artistsFromPage.length} posibles artistas.`);
@@ -113,7 +122,9 @@ async function findNewArtists() {
         const uniqueArtists = [...new Map(allFoundArtists.map(item => [item.name.toLowerCase(), item])).values()];
         
         // 1. Obtenemos solo los nombres de los artistas encontrados
-        const foundArtistNames = uniqueArtists.map(artist => new RegExp(`^${artist.name.trim()}, 'i'));
+        // --- FIX: Expresión regular corregida ---
+        const foundArtistNames = uniqueArtists.map(artist => new RegExp(`^${artist.name.trim()}`, 'i'));
+        // ---------------------------------------
 
         // 2. Hacemos UNA SOLA consulta a la BD para encontrar cuáles de esos nombres YA EXISTEN
         const existingArtistsCursor = artistsCollection.find({ name: { $in: foundArtistNames } });
