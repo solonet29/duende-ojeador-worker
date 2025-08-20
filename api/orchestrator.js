@@ -30,17 +30,37 @@ const customsearch = google.customsearch('v1');
 const BATCH_SIZE = 15; // Límite de artistas a procesar por ejecución.
 
 // --- Prompt para Gemini (Refinado) ---
-const eventExtractionPrompt = (artistName, url, content) => `
-    Analiza el siguiente contenido de la URL "${url}" y extrae eventos futuros del artista "${artistName}".
-    Devuelve un array JSON de objetos.
-    REGLAS ESTRICTAS:
-    1. Tu respuesta DEBE ser exclusivamente un array JSON válido.
-    2. El formato de cada objeto es: { "name": "Nombre del Evento", "description": "Descripción breve", "date": "YYYY-MM-DD", "time": "HH:MM", "venue": "Lugar", "city": "Ciudad", "country": "País", "sourceUrl": "${url}" }.
-    3. Extrae solo eventos futuros. Ignora fechas pasadas.
-    4. Si no encuentras eventos, devuelve un array vacío: [].
+const eventExtractionPrompt = (artistName, url, content) => {
+    const currentYear = new Date().getFullYear(); // Obtenemos el año actual dinámicamente
+
+    return `
+    Tu tarea es actuar como un asistente experto en extracción de datos de eventos musicales.
+    Analiza el siguiente contenido de la URL "${url}" para encontrar los próximos conciertos o actuaciones en vivo del artista "${artistName}".
+
+    El año de referencia es ${currentYear}. Extrae únicamente eventos que ocurran en ${currentYear} o en años posteriores.
+
+    Sigue estas REGLAS AL PIE DE LA LETRA:
+    1.  **Formato de Salida Obligatorio**: Tu respuesta DEBE ser un array JSON, incluso si no encuentras eventos (en cuyo caso, devuelve un array vacío: []). No incluyas texto explicativo, comentarios o markdown antes o después del JSON.
+    2.  **Esquema del Objeto Evento**: Cada objeto en el array debe seguir esta estructura exacta:
+        {
+          "name": "Nombre del Evento (si no se especifica, usa el nombre del artista)",
+          "description": "Descripción breve y relevante del evento. Máximo 150 caracteres.",
+          "date": "YYYY-MM-DD",
+          "time": "HH:MM (formato 24h, si no se especifica, usa '00:00')",
+          "venue": "Nombre del recinto o lugar del evento",
+          "city": "Ciudad del evento",
+          "country": "País del evento",
+          "sourceUrl": "${url}"
+        }
+    3.  **Fidelidad y Relevancia de los Datos**:
+        - No inventes información. Si un campo no está claramente presente en el texto (por ejemplo, la hora), usa el valor por defecto indicado en el esquema o un string vacío.
+        - Ignora categóricamente eventos pasados, talleres, clases magistrales, retransmisiones online o simples menciones que no constituyan un evento futuro concreto y localizable.
+        - Asegúrate de que la fecha extraída es completa (día, mes y año). Si solo se menciona el mes, descarta el evento para evitar imprecisiones.
+
     Contenido a analizar:
     ${content}
 `;
+};
 
 function cleanHtmlForGemini(html) {
     const $ = cheerio.load(html);
@@ -78,8 +98,7 @@ async function findAndProcessEvents() {
             console.log(`\n---------------------------------\n🎤 Procesando a: ${artist.name}`);
             let eventsFoundForArtist = [];
             const searchQueries = [
-                `concierto flamenco "${artist.name}" 2025`,
-                `"${artist.name}" entradas gira`
+                `"${artist.name}" "entradas" "concierto" site:ticketmaster.es OR site:elcorteingles.es OR site:entradas.com OR site:dice.fm OR site:seetickets.com`
             ];
 
             for (const query of searchQueries) {
@@ -88,8 +107,18 @@ async function findAndProcessEvents() {
                     const searchResults = searchRes.data.items || [];
                     for (const result of searchResults) {
                         try {
-                            console.log(`   -> Analizando URL: ${result.link}`);
-                            const pageResponse = await axios.get(result.link, { timeout: 8000 });
+                            // --- NUEVO: Filtro de URLs para descartar "basura" antes de llamar a la IA ---
+                            const url = result.link;
+                            const domainsToAvoid = ['tripadvisor', 'gamefaqs', 'repec', 'wikipedia', 'facebook', 'instagram', 'twitter'];
+
+                            if (domainsToAvoid.some(domain => url.includes(domain))) {
+                                console.log(`   -> 🟡 URL descartada por dominio no relevante: ${url}`);
+                                continue; // Salta a la siguiente URL sin gastar en la IA
+                            }
+                            // --- FIN DEL FILTRO ---
+
+                            console.log(`   -> Analizando URL: ${url}`); // Ahora usamos la variable 'url'
+                            const pageResponse = await axios.get(url, { timeout: 8000 });
                             const cleanedContent = cleanHtmlForGemini(pageResponse.data);
 
                             if (cleanedContent.length < 100) continue;
