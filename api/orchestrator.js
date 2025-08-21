@@ -16,6 +16,7 @@ const customSearchEngineId = process.env.GOOGLE_CX;
 
 // --- Inicialización de Servicios ---
 const customsearch = google.customsearch('v1');
+console.log("QSTASH_TOKEN:", process.env.QSTASH_TOKEN);
 const qstashClient = new Client({
     token: process.env.QSTASH_TOKEN,
 });
@@ -90,7 +91,8 @@ async function findAndQueueUrls() {
                 console.log(`   -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Encolando...`);
                 
                 // Construimos la URL completa del worker
-                const workerUrl = `https://${process.env.VERCEL_URL}/api/process-url`;
+                console.log("VERCEL_URL:", process.env.VERCEL_URL);
+                const workerUrl = `https://${process.env.VERCEL_URL || 'duende-ojeador-worker.vercel.app'}/api/process-url`;
 
                 const messages = Array.from(urlsToProcess).map(url => ({
                     url: workerUrl,
