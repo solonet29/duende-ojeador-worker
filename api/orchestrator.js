@@ -87,14 +87,12 @@ async function findAndQueueUrls() {
             if (urlsToProcess.size > 0) {
                 console.log(`   -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Encolando...`);
 
-                // ¡CORRECCIÓ-N! Usar qstashClient.batch para eficiencia
+                // ¡CORRECCIÓN! Enviar directamente a la cola, sin especificar destination
                 const messages = Array.from(urlsToProcess).map(url => ({
-                    destination: '/api/process-url', // ¡CORRECCIÓN! Usar solo el path
-                    queue: 'duende-finder-urls',
                     body: JSON.stringify({ url, artistName: artist.name }),
                 }));
 
-                await qstashClient.batch(messages);
+                await qstashClient.queue('duende-finder-urls').batch(messages);
                 urlsEnqueued += messages.length;
             }
 
