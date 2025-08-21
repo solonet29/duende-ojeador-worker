@@ -28,7 +28,7 @@ const geminiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash', genera
 const customsearch = google.customsearch('v1');
 
 // --- AJUSTE CLAVE: Reducción del lote para evitar timeouts en Vercel ---
-const BATCH_SIZE = 8;
+const BATCH_SIZE = 4;
 
 // --- PROMPT PARA GEMINI (Optimizado para Flamenco) ---
 const eventExtractionPrompt = (artistName, url, content) => {
@@ -136,7 +136,21 @@ async function findAndProcessEvents() {
                 const prompt = eventExtractionPrompt(artistName, url, cleanedContent);
                 const geminiResult = await geminiModel.generateContent(prompt);
                 const responseText = geminiResult.response.text();
-                const eventsFromPage = JSON.parse(responseText);
+                let eventsFromPage = [];
+
+                try {
+                    const parsedResponse = JSON.parse(responseText);
+                    if (Array.isArray(parsedResponse)) {
+                        eventsFromPage = parsedResponse;
+                    } else if (typeof parsedResponse === 'object' && parsedResponse !== null) {
+                        // If Gemini returns a single object, wrap it in an array
+                        eventsFromPage = [parsedResponse];
+                    }
+                } catch (e) {
+                    console.error(`   ⚠️ Error al parsear JSON de la IA para ${url}. Respuesta no válida:`, responseText);
+                    return [];
+                }
+
 
                 if (eventsFromPage.length > 0) {
                     console.log(`   ✨ La IA encontró ${eventsFromPage.length} posibles eventos en ${url}.`);
