@@ -97,7 +97,7 @@ async function findAndQueueUrls() {
                     body: JSON.stringify({ url, artistName: artist.name }),
                 }));
 
-                await qstashClient.publishJSON(messages);
+                await qstashClient.publishBatchJSON(messages);
                 urlsEnqueued += messages.length;
             }
 
