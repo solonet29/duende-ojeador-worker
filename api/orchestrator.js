@@ -93,7 +93,7 @@ async function findAndQueueUrls() {
 
                 // Publicamos las URLs encontradas en el topic de QStash
                 const messages = Array.from(urlsToProcess).map(url => ({
-                    topic: 'duende-finder-urls',
+                    queue: 'duende-finder-urls',
                     body: JSON.stringify({ url, artistName: artist.name }),
                 }));
 
