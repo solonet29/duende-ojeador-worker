@@ -87,7 +87,7 @@ async function findAndQueueUrls(destinationUrl) {
             if (urlsToProcess.size > 0) {
                 console.log(`   -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Encolando...`);
 
-                // ¡CORRECCIÓN! Usar qstashClient.batch para eficiencia
+                // ¡CORRECCIÓ-N! Usar qstashClient.batch para eficiencia
                 const messages = Array.from(urlsToProcess).map(url => ({
                     destination: destinationUrl,
                     queue: 'duende-finder-urls',
