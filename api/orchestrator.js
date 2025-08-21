@@ -40,7 +40,7 @@ if (urlsToProcess.size > 0) {
         body: JSON.stringify({ url, artistName: artist.name }),
     }));
 
-    // Usamos el método batch que es más eficiente
+    // Usamos el nuevo método batch que es más eficiente
     await qstashClient.batch(messages);
 
     urlsEnqueued += messages.length;
