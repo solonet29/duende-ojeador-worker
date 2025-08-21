@@ -19,9 +19,10 @@ const customsearch = google.customsearch('v1');
 console.log("QSTASH_TOKEN:", process.env.QSTASH_TOKEN);
 const qstashClient = new Client({
     token: process.env.QSTASH_TOKEN,
+    baseUrl: process.env.QSTASH_URL,
 });
 
-// --- AJUSTE CLAVE: Lote más grande porque la tarea es más ligera ---
+// --- AJUSTE DE CLAVE: Lote más grande porque la tarea es más ligera ---
 const BATCH_SIZE = 10;
 
 // --- Lógica de búsqueda en cascada y por categorías ---
@@ -89,7 +90,7 @@ async function findAndQueueUrls() {
 
             if (urlsToProcess.size > 0) {
                 console.log(`   -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Encolando...`);
-                
+
                 // Publicamos las URLs encontradas en el topic de QStash
                 const messages = Array.from(urlsToProcess).map(url => ({
                     topic: 'duende-finder-urls',
