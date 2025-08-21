@@ -76,42 +76,50 @@ async function findNewArtists() {
 
 
         let allFoundArtists = [];
+        const processUrl = async (result) => {
+            try {
+                console.log(`   -> Analizando URL: ${result.link}`);
+                const pageResponse = await axios.get(result.link, { timeout: 8000 });
+                const cleanedContent = cleanHtmlForGemini(pageResponse.data);
+
+                if (cleanedContent.length < 100) return [];
+
+                const prompt = artistExtractionPrompt(result.link, cleanedContent);
+                const geminiResult = await geminiModel.generateContent(prompt);
+                const responseText = geminiResult.response.text();
+
+                try {
+                    const artistsFromPage = JSON.parse(responseText);
+                    if (artistsFromPage.length > 0) {
+                        console.log(`   ✨ La IA encontró ${artistsFromPage.length} posibles artistas en ${result.link}`);
+                    }
+                    return artistsFromPage;
+                } catch (e) {
+                    console.error(`   ⚠️ Error al parsear JSON de la IA para ${result.link}.`);
+                    return [];
+                }
+            } catch (error) {
+                console.error(`   ❌ Error procesando ${result.link}: ${error.message}`);
+                return [];
+            }
+        };
 
         for (const query of discoverySearchQueries) {
             console.log(`---------------------------------\n🔍 Buscando con la consulta: "${query}"`);
+            console.time(`[TIMER] Búsqueda y análisis para "${query}"`);
+
             const searchRes = await customsearch.cse.list({ cx: customSearchEngineId, q: query, auth: googleApiKey, num: 5 });
             const searchResults = searchRes.data.items || [];
 
-            for (const result of searchResults) {
-                try {
-                    console.log(`   -> Analizando URL: ${result.link}`);
-                    const pageResponse = await axios.get(result.link, { timeout: 8000 });
-                    const cleanedContent = cleanHtmlForGemini(pageResponse.data);
-
-                    if (cleanedContent.length < 100) continue;
-
-                    const prompt = artistExtractionPrompt(result.link, cleanedContent);
-                    const geminiResult = await geminiModel.generateContent(prompt);
-                    const responseText = geminiResult.response.text();
-                    
-                    // --- FIX: Parseo de JSON robusto ---
-                    let artistsFromPage = [];
-                    try {
-                        artistsFromPage = JSON.parse(responseText);
-                    } catch (e) {
-                        console.error(`   ⚠️ Error al parsear JSON de la IA para ${result.link}. Respuesta no válida.`);
-                        continue; // Salta a la siguiente URL
-                    }
-                    // -------------------------------------
-
-                    if (artistsFromPage.length > 0) {
-                        console.log(`   ✨ La IA encontró ${artistsFromPage.length} posibles artistas.`);
-                        allFoundArtists.push(...artistsFromPage);
-                    }
-                } catch (error) {
-                    console.error(`   ❌ Error procesando ${result.link}: ${error.message}`);
+            if (searchResults.length > 0) {
+                const processingPromises = searchResults.map(processUrl);
+                const resultsFromQuery = await Promise.all(processingPromises);
+                const artistsFromQuery = resultsFromQuery.flat();
+                if(artistsFromQuery.length > 0){
+                    allFoundArtists.push(...artistsFromQuery);
                 }
             }
+            console.timeEnd(`[TIMER] Búsqueda y análisis para "${query}"`);
         }
 
         console.log(`\n---------------------------------\n🎉 Descubrimiento finalizado. Total de artistas encontrados: ${allFoundArtists.length}`);

@@ -114,69 +114,73 @@ async function findAndProcessEvents() {
         }
         console.log(`🔍 Lote de ${artistsToSearch.length} artistas obtenido. Empezando procesamiento...`);
 
-        // Array para inserciones múltiples
         const eventsToInsert = [];
 
+        const processUrl = async (url, artistName) => {
+            try {
+                const domainsToAvoid = ['tripadvisor', 'gamefaqs', 'repec', 'wikipedia'];
+                if (domainsToAvoid.some(domain => url.includes(domain))) {
+                    console.log(`   -> 🟡 URL descartada por dominio no relevante: ${url}`);
+                    return [];
+                }
+
+                console.log(`   -> Analizando URL: ${url}`);
+                const pageResponse = await axios.get(url, { timeout: 8000 });
+                const cleanedContent = cleanHtmlForGemini(pageResponse.data);
+
+                if (cleanedContent.length < 100) {
+                    console.log("   -> Contenido demasiado corto, saltando.");
+                    return [];
+                }
+
+                const prompt = eventExtractionPrompt(artistName, url, cleanedContent);
+                const geminiResult = await geminiModel.generateContent(prompt);
+                const responseText = geminiResult.response.text();
+                const eventsFromPage = JSON.parse(responseText);
+
+                if (eventsFromPage.length > 0) {
+                    console.log(`   ✨ La IA encontró ${eventsFromPage.length} posibles eventos en ${url}.`);
+                }
+                return eventsFromPage.map(e => ({ ...e, artist: artistName }));
+            } catch (error) {
+                console.error(`   ❌ Error procesando ${url}: ${error.message.substring(0, 150)}`);
+                return [];
+            }
+        };
+
         for (const artist of artistsToSearch) {
-            console.log(`\n---------------------------------\n🎤 Procesando a: ${artist.name}`);
+            console.log(`
+---------------------------------
+🎤 Procesando a: ${artist.name}`);
+            console.time(`[TIMER] Procesamiento para ${artist.name}`);
             let eventsFoundForArtist = [];
             const queriesForArtist = searchQueries(artist.name);
+            let urlsToProcess = new Set();
 
-            // Bucle de búsqueda en cascada
             for (const category of ['redes_sociales', 'descubrimiento', 'entradas']) {
-                console.log(`   -> Iniciando búsqueda por categoría: "${category}"`);
-
+                console.log(`   -> Iniciando búsqueda por categoría: "${category}"`);
                 const currentQueries = queriesForArtist[category];
                 for (const query of currentQueries) {
                     try {
                         const searchRes = await customsearch.cse.list({ cx: customSearchEngineId, q: query, auth: googleApiKey, num: 3 });
                         const searchResults = searchRes.data.items || [];
-                        console.log(`   -> Resultados de búsqueda para "${query}": ${searchResults.length}`);
-
-                        for (const result of searchResults) {
-                            try {
-                                const url = result.link;
-                                const domainsToAvoid = ['tripadvisor', 'gamefaqs', 'repec', 'wikipedia'];
-                                if (domainsToAvoid.some(domain => url.includes(domain))) {
-                                    console.log(`   -> 🟡 URL descartada por dominio no relevante: ${url}`);
-                                    continue;
-                                }
-
-                                console.log(`   -> Analizando URL: ${url}`);
-                                const pageResponse = await axios.get(url, { timeout: 8000 });
-                                const cleanedContent = cleanHtmlForGemini(pageResponse.data);
-
-                                if (cleanedContent.length < 100) {
-                                    console.log("   -> Contenido demasiado corto, saltando.");
-                                    continue;
-                                }
-
-                                const prompt = eventExtractionPrompt(artist.name, result.link, cleanedContent);
-                                const geminiResult = await geminiModel.generateContent(prompt);
-                                const responseText = geminiResult.response.text();
-
-                                const eventsFromPage = JSON.parse(responseText);
-
-                                if (eventsFromPage.length > 0) {
-                                    console.log(`   ✨ La IA encontró ${eventsFromPage.length} posibles eventos.`);
-                                    eventsFoundForArtist.push(...eventsFromPage.map(e => ({ ...e, artist: artist.name })));
-                                }
-                            } catch (error) {
-                                console.error(`   ❌ Error procesando ${result.link}: ${error.message.substring(0, 150)}`);
-                            }
-                        }
+                        console.log(`   -> Resultados de búsqueda para "${query}": ${searchResults.length}`);
+                        searchResults.forEach(result => urlsToProcess.add(result.link));
                     } catch (searchError) {
-                        console.error(`   ❌ Error en la búsqueda de Google para "${query}": ${searchError.message}`);
+                        console.error(`   ❌ Error en la búsqueda de Google para "${query}": ${searchError.message}`);
                     }
-                }
-                if (eventsFoundForArtist.length > 0) {
-                    console.log(`   ✅ Se encontraron eventos en la categoría "${category}". Pasando al siguiente artista.`);
-                    break;
                 }
             }
 
+            if (urlsToProcess.size > 0) {
+                const processingPromises = Array.from(urlsToProcess).map(url => processUrl(url, artist.name));
+                const results = await Promise.all(processingPromises);
+                eventsFoundForArtist = results.flat();
+            }
+
             if (eventsFoundForArtist.length > 0) {
-                console.log(`\n🕵️‍♂️ Preparando eventos para inserción. Eventos brutos encontrados: ${eventsFoundForArtist.length}`);
+                console.log(`
+🕵️‍♂️ Preparando eventos para inserción. Eventos brutos encontrados: ${eventsFoundForArtist.length}`);
 
                 const uniqueEvents = [...new Map(eventsFoundForArtist.map(e => [e.date + e.venue, e])).values()];
 
@@ -184,11 +188,11 @@ async function findAndProcessEvents() {
 
                 for (const event of uniqueEvents) {
                     if (!event.name || !event.date || !event.venue) {
-                        console.log(`   ⚠️ Evento omitido por datos incompletos:`, event);
+                        console.log(`   ⚠️ Evento omitido por datos incompletos:`, event);
                         continue;
                     }
 
-                    console.log("   Buscando duplicado para:", event.artist, event.venue, event.date);
+                    console.log("   Buscando duplicado para:", event.artist, event.venue, event.date);
                     const existingEvent = await eventsCollection.findOne({
                         artist: event.artist,
                         venue: event.venue,
@@ -205,9 +209,9 @@ async function findAndProcessEvents() {
                             updatedAt: new Date(),
                         };
                         eventsToInsert.push(newEventDoc);
-                        console.log(`   ✅ Evento nuevo preparado para inserción: ${newEventDoc.name}`);
+                        console.log(`   ✅ Evento nuevo preparado para inserción: ${newEventDoc.name}`);
                     } else {
-                        console.log(`   🟡 Evento duplicado, omitido: ${event.name}`);
+                        console.log(`   🟡 Evento duplicado, omitido: ${event.name}`);
                     }
                 }
             }
@@ -216,6 +220,7 @@ async function findAndProcessEvents() {
                 { _id: artist._id },
                 { $set: { lastScrapedAt: new Date() } }
             );
+            console.timeEnd(`[TIMER] Procesamiento para ${artist.name}`);
         }
 
         // Inserción masiva al final del proceso
