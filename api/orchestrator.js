@@ -167,9 +167,9 @@ async function findAndProcessEvents() {
         };
 
         for (const artist of artistsToSearch) {
-            console.log("
+            console.log(`
 ---------------------------------
-🎤 Procesando a: ${artist.name}");
+🎤 Procesando a: ${artist.name}`);
             console.time(`[TIMER] Procesamiento para ${artist.name}`);
             
             const queriesForArtist = searchQueries(artist.name);
@@ -202,8 +202,8 @@ async function findAndProcessEvents() {
             }
 
             if (eventsFoundForArtist.length > 0) {
-                console.log("
-🕵️‍♂️ Preparando eventos para inserción. Eventos brutos encontrados: ${eventsFoundForArtist.length}");
+                console.log(`
+🕵️‍♂️ Preparando eventos para inserción. Eventos brutos encontrados: ${eventsFoundForArtist.length}`);
 
                 const uniqueEvents = [...new Map(eventsFoundForArtist.map(e => [e.date + e.venue, e])).values()];
                 console.log(`Eventos únicos después del filtrado: ${uniqueEvents.length}`);
@@ -258,8 +258,8 @@ async function findAndProcessEvents() {
         }
 
         if (totalNewEventsCount > 0) {
-            console.log("
-🎉 Proceso finalizado. Total de nuevos eventos añadidos: ${totalNewEventsCount}.");
+            console.log(`
+🎉 Proceso finalizado. Total de nuevos eventos añadidos: ${totalNewEventsCount}.`);
         } else {
             console.log("\n📪 No se encontraron nuevos eventos para añadir en esta ejecución.");
         }
