@@ -36,7 +36,7 @@ const searchQueries = (artistName) => ({
 });
 
 // --- Flujo de Principal del Orquestador  o (Productor) ---
-async function findAndQueueUrls() {
+async function findAndQueueUrls(destinationUrl) {
     console.log('🚀 Orquestador-Productor iniciado. Buscando artistas para encolar...');
     const client = new MongoClient(mongoUri);
 
@@ -89,6 +89,7 @@ async function findAndQueueUrls() {
 
                 // ¡CORRECCIÓN! Usar qstashClient.batch para eficiencia
                 const messages = Array.from(urlsToProcess).map(url => ({
+                    destination: destinationUrl,
                     queue: 'duende-finder-urls',
                     body: JSON.stringify({ url, artistName: artist.name }),
                 }));
@@ -120,7 +121,10 @@ async function findAndQueueUrls() {
 // Endpoint para Vercel
 module.exports = async (req, res) => {
     try {
-        await findAndQueueUrls();
+        const host = req.headers.host;
+        const protocol = host.startsWith('localhost') ? 'http' : 'https';
+        const destinationUrl = `${protocol}://${host}/api/process-url`;
+        await findAndQueueUrls(destinationUrl);
         res.status(200).send('Orquestador-Productor ejecutado con éxito.');
     } catch (error) {
         res.status(500).send(`Error en el Orquestador-Productor: ${error.message}`);
