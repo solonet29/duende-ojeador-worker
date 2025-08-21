@@ -83,9 +83,6 @@ const searchQueries = (artistName) => ({
         `"${artistName}" "agenda" "conciertos"`,
         `"${artistName}" "fechas gira"`,
         `"${artistName}" "próximos eventos"`
-    ],
-    entradas: [
-        `"${artistName}" "entradas" "concierto" site:ticketmaster.es OR site:elcorteingles.es OR site:entradas.com OR site:dice.fm OR site:seetickets.com`
     ]
 });
 
@@ -171,7 +168,7 @@ async function findAndProcessEvents() {
             const queriesForArtist = searchQueries(artist.name);
             let urlsToProcess = new Set();
 
-            for (const category of ['redes_sociales', 'descubrimiento', 'entradas']) {
+            for (const category of ['redes_sociales', 'descubrimiento']) {
                 console.log(`   -> Iniciando búsqueda por categoría: "${category}"`);
                 const currentQueries = queriesForArtist[category];
                 for (const query of currentQueries) {
@@ -211,6 +208,7 @@ async function findAndProcessEvents() {
                     const existingEventsSet = new Set(existingEvents.map(e => e.date + e.venue + e.artist));
                     console.timeEnd("[TIMER] Consulta de eventos existentes");
 
+                    const artistEventsToInsert = [];
                     for (const event of uniqueEvents) {
                         if (!event.name || !event.date || !event.venue) {
                             console.log(`   ⚠️ Evento omitido por datos incompletos:`, event);
@@ -226,11 +224,16 @@ async function findAndProcessEvents() {
                                 createdAt: new Date(),
                                 updatedAt: new Date(),
                             };
-                            eventsToInsert.push(newEventDoc);
-                            console.log(`   ✅ Evento nuevo preparado para inserción: ${newEventDoc.name}`);
+                            artistEventsToInsert.push(newEventDoc);
                         } else {
                             console.log(`   🟡 Evento duplicado, omitido: ${event.name}`);
                         }
+                    }
+
+                    if (artistEventsToInsert.length > 0) {
+                        await eventsCollection.insertMany(artistEventsToInsert);
+                        totalNewEventsCount += artistEventsToInsert.length;
+                        console.log(`   ✅ ${artistEventsToInsert.length} nuevos eventos para ${artist.name} añadidos a la base de datos.`);
                     }
                 }
             }
@@ -242,11 +245,9 @@ async function findAndProcessEvents() {
             console.timeEnd(`[TIMER] Procesamiento para ${artist.name}`);
         }
 
-        // Inserción masiva al final del proceso
-        if (eventsToInsert.length > 0) {
-            await eventsCollection.insertMany(eventsToInsert);
-            totalNewEventsCount = eventsToInsert.length;
-            console.log(`\n🎉 Inserción masiva completada. Total de nuevos eventos añadidos: ${totalNewEventsCount}.`);
+        if (totalNewEventsCount > 0) {
+            console.log(`
+🎉 Proceso finalizado. Total de nuevos eventos añadidos: ${totalNewEventsCount}.`);
         } else {
             console.log("\n📪 No se encontraron nuevos eventos para añadir en esta ejecución.");
         }
