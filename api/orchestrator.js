@@ -111,8 +111,6 @@ async function findAndProcessEvents() {
         }
         console.log(`🔍 Lote de ${artistsToSearch.length} artistas obtenido. Empezando procesamiento...`);
 
-        const eventsToInsert = [];
-
         const processUrl = async (url, artistName) => {
             try {
                 const domainsToAvoid = ['tripadvisor', 'gamefaqs', 'repec', 'wikipedia'];
@@ -140,14 +138,12 @@ async function findAndProcessEvents() {
                     if (Array.isArray(parsedResponse)) {
                         eventsFromPage = parsedResponse;
                     } else if (typeof parsedResponse === 'object' && parsedResponse !== null) {
-                        // If Gemini returns a single object, wrap it in an array
                         eventsFromPage = [parsedResponse];
                     }
                 } catch (e) {
                     console.error(`   ⚠️ Error al parsear JSON de la IA para ${url}. Respuesta no válida:`, responseText);
                     return [];
                 }
-
 
                 if (eventsFromPage.length > 0) {
                     console.log(`   ✨ La IA encontró ${eventsFromPage.length} posibles eventos en ${url}.`);
@@ -159,39 +155,55 @@ async function findAndProcessEvents() {
             }
         };
 
-        for (const artist of artistsToSearch) {
-            console.log(`
----------------------------------
-🎤 Procesando a: ${artist.name}`);
-            console.time(`[TIMER] Procesamiento para ${artist.name}`);
-            let eventsFoundForArtist = [];
-            const queriesForArtist = searchQueries(artist.name);
-            let urlsToProcess = new Set();
+        const processInBatches = async (urls, artistName, batchSize = 5) => {
+            let allEvents = [];
+            for (let i = 0; i < urls.length; i += batchSize) {
+                const batch = urls.slice(i, i + batchSize);
+                const promises = batch.map(url => processUrl(url, artistName));
+                const results = await Promise.all(promises);
+                allEvents = allEvents.concat(results.flat());
+            }
+            return allEvents;
+        };
 
-            for (const category of ['redes_sociales', 'descubrimiento']) {
-                console.log(`   -> Iniciando búsqueda por categoría: "${category}"`);
-                const currentQueries = queriesForArtist[category];
-                for (const query of currentQueries) {
-                    try {
-                        const searchRes = await customsearch.cse.list({ cx: customSearchEngineId, q: query, auth: googleApiKey, num: 3 });
-                        const searchResults = searchRes.data.items || [];
-                        console.log(`   -> Resultados de búsqueda para "${query}": ${searchResults.length}`);
-                        searchResults.forEach(result => urlsToProcess.add(result.link));
-                    } catch (searchError) {
-                        console.error(`   ❌ Error en la búsqueda de Google para "${query}": ${searchError.message}`);
-                    }
+        for (const artist of artistsToSearch) {
+            console.log("
+---------------------------------
+🎤 Procesando a: ${artist.name}");
+            console.time(`[TIMER] Procesamiento para ${artist.name}`);
+            
+            const queriesForArtist = searchQueries(artist.name);
+            const urlsToProcess = new Set();
+            const searchPromises = [];
+
+            for (const category of Object.keys(queriesForArtist)) {
+                for (const query of queriesForArtist[category]) {
+                    searchPromises.push(
+                        customsearch.cse.list({ cx: customSearchEngineId, q: query, auth: googleApiKey, num: 3 })
+                            .then(res => {
+                                const items = res.data.items || [];
+                                console.log(`   -> Resultados para "${query}": ${items.length}`);
+                                items.forEach(item => urlsToProcess.add(item.link));
+                            })
+                            .catch(err => {
+                                console.error(`   ❌ Error en búsqueda para "${query}": ${err.message}`);
+                            })
+                    );
                 }
             }
 
+            console.log(`🌐 Lanzando ${searchPromises.length} búsquedas en paralelo...`);
+            await Promise.all(searchPromises);
+            console.log(`✅ Búsquedas de Google completadas. URLs encontradas: ${urlsToProcess.size}`);
+
+            let eventsFoundForArtist = [];
             if (urlsToProcess.size > 0) {
-                const processingPromises = Array.from(urlsToProcess).map(url => processUrl(url, artist.name));
-                const results = await Promise.all(processingPromises);
-                eventsFoundForArtist = results.flat();
+                eventsFoundForArtist = await processInBatches(Array.from(urlsToProcess), artist.name, 5);
             }
 
             if (eventsFoundForArtist.length > 0) {
-                console.log(`
-🕵️‍♂️ Preparando eventos para inserción. Eventos brutos encontrados: ${eventsFoundForArtist.length}`);
+                console.log("
+🕵️‍♂️ Preparando eventos para inserción. Eventos brutos encontrados: ${eventsFoundForArtist.length}");
 
                 const uniqueEvents = [...new Map(eventsFoundForArtist.map(e => [e.date + e.venue, e])).values()];
                 console.log(`Eventos únicos después del filtrado: ${uniqueEvents.length}`);
@@ -246,8 +258,8 @@ async function findAndProcessEvents() {
         }
 
         if (totalNewEventsCount > 0) {
-            console.log(`
-🎉 Proceso finalizado. Total de nuevos eventos añadidos: ${totalNewEventsCount}.`);
+            console.log("
+🎉 Proceso finalizado. Total de nuevos eventos añadidos: ${totalNewEventsCount}.");
         } else {
             console.log("\n📪 No se encontraron nuevos eventos para añadir en esta ejecución.");
         }
