@@ -183,35 +183,40 @@ async function findAndProcessEvents() {
 🕵️‍♂️ Preparando eventos para inserción. Eventos brutos encontrados: ${eventsFoundForArtist.length}`);
 
                 const uniqueEvents = [...new Map(eventsFoundForArtist.map(e => [e.date + e.venue, e])).values()];
-
                 console.log(`Eventos únicos después del filtrado: ${uniqueEvents.length}`);
 
-                for (const event of uniqueEvents) {
-                    if (!event.name || !event.date || !event.venue) {
-                        console.log(`   ⚠️ Evento omitido por datos incompletos:`, event);
-                        continue;
-                    }
+                const eventChecks = uniqueEvents.map(event => ({
+                    artist: event.artist,
+                    venue: event.venue,
+                    date: event.date
+                }));
 
-                    console.log("   Buscando duplicado para:", event.artist, event.venue, event.date);
-                    const existingEvent = await eventsCollection.findOne({
-                        artist: event.artist,
-                        venue: event.venue,
-                        date: event.date
-                    });
+                if (eventChecks.length > 0) {
+                    console.time("[TIMER] Consulta de eventos existentes");
+                    const existingEvents = await eventsCollection.find({ $or: eventChecks }).toArray();
+                    const existingEventsSet = new Set(existingEvents.map(e => e.date + e.venue + e.artist));
+                    console.timeEnd("[TIMER] Consulta de eventos existentes");
 
-                    if (!existingEvent) {
-                        const newEventDoc = {
-                            ...event,
-                            id: `evt-${event.artist.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${event.date}`,
-                            verified: false,
-                            contentStatus: 'pending',
-                            createdAt: new Date(),
-                            updatedAt: new Date(),
-                        };
-                        eventsToInsert.push(newEventDoc);
-                        console.log(`   ✅ Evento nuevo preparado para inserción: ${newEventDoc.name}`);
-                    } else {
-                        console.log(`   🟡 Evento duplicado, omitido: ${event.name}`);
+                    for (const event of uniqueEvents) {
+                        if (!event.name || !event.date || !event.venue) {
+                            console.log(`   ⚠️ Evento omitido por datos incompletos:`, event);
+                            continue;
+                        }
+
+                        if (!existingEventsSet.has(event.date + event.venue + event.artist)) {
+                            const newEventDoc = {
+                                ...event,
+                                id: `evt-${event.artist.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${event.date}`,
+                                verified: false,
+                                contentStatus: 'pending',
+                                createdAt: new Date(),
+                                updatedAt: new Date(),
+                            };
+                            eventsToInsert.push(newEventDoc);
+                            console.log(`   ✅ Evento nuevo preparado para inserción: ${newEventDoc.name}`);
+                        } else {
+                            console.log(`   🟡 Evento duplicado, omitido: ${event.name}`);
+                        }
                     }
                 }
             }
