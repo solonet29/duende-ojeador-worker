@@ -2,6 +2,9 @@
 // Misión: Encontrar URLs de posibles eventos y enviarlas a una cola de QStash.
 
 require('dotenv').config();
+// Aquí lees la variable de entorno
+const CONSUMER_ENDPOINT_URL = process.env.CONSUMER_ENDPOINT_URL || 'https://duende-ojeador-worker.vercel.app/api/process-urls.js';
+
 const { MongoClient } = require('mongodb');
 const { google } = require('googleapis');
 const { Client } = require('@upstash/qstash');
@@ -15,12 +18,35 @@ const googleApiKey = process.env.GOOGLE_API_KEY;
 const customSearchEngineId = process.env.GOOGLE_CX;
 
 // --- Inicialización de Servicios ---
-const customsearch = google.customsearch('v1');
-console.log("QSTASH_TOKEN:", process.env.QSTASH_TOKEN);
-const qstashClient = new Client({
-    token: process.env.QSTASH_TOKEN,
-    baseUrl: process.env.QSTASH_URL,
-});
+// /api/orchestrator.js - PRODUCTOR
+
+// --- Configuración ---
+// ... (tus otras configuraciones)
+const qstashClient = new Client({ token: process.env.QSTASH_TOKEN });
+
+// --- ¡NUEVO! Define el destino explícitamente ---
+
+
+// ... (el resto de tu código hasta el bucle)
+
+// Dentro de tu bucle `for (const artist of artistsToSearch)`
+if (urlsToProcess.size > 0) {
+    console.log(`  -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Publicando...`);
+
+    // Publicamos las URLs directamente al endpoint consumidor
+    const messages = Array.from(urlsToProcess).map(url => ({
+        // ANTES: queue: 'duende-finder-urls',
+        url: CONSUMER_ENDPOINT_URL, // <-- ¡CAMBIO CLAVE AQUÍ!
+        body: JSON.stringify({ url, artistName: artist.name }),
+    }));
+
+    // Usamos el método batch que es más eficiente
+    await qstashClient.batch(messages);
+
+    urlsEnqueued += messages.length;
+}
+
+// ... (el resto del código sigue igual)
 
 // --- AJUSTE DE CLAVE: Lote más grande porque la tarea es más ligera ---
 const BATCH_SIZE = 10;
