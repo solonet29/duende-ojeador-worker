@@ -89,7 +89,7 @@ async function findAndQueueUrls() {
 
                 // ¡CORRECCIÓN! Usar qstashClient.batch para eficiencia
                 const messages = Array.from(urlsToProcess).map(url => ({
-                    topic: 'duende-finder-urls',
+                    queue: 'duende-finder-urls',
                     body: JSON.stringify({ url, artistName: artist.name }),
                 }));
 
