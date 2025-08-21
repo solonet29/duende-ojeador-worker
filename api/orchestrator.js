@@ -90,12 +90,9 @@ async function findAndQueueUrls() {
             if (urlsToProcess.size > 0) {
                 console.log(`   -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Encolando...`);
                 
-                // Construimos la URL completa del worker
-                console.log("VERCEL_URL:", process.env.VERCEL_URL);
-                const workerUrl = `https://${process.env.VERCEL_URL || 'duende-ojeador-worker.vercel.app'}/api/process-url`;
-
+                // Publicamos las URLs encontradas en el topic de QStash
                 const messages = Array.from(urlsToProcess).map(url => ({
-                    url: workerUrl,
+                    topic: 'duende-finder-urls',
                     body: JSON.stringify({ url, artistName: artist.name }),
                 }));
 
