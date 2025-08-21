@@ -18,7 +18,6 @@ const BATCH_SIZE = 10;
 
 // --- Inicialización de Servicios ---
 const qstashClient = new Client({ token: process.env.QSTASH_TOKEN });
-// ¡CORRECCIÓN! Inicializar el cliente de customsearch
 const customsearch = google.customsearch('v1');
 
 // --- Lógica de búsqueda en cascada y por categorías ---
@@ -87,12 +86,14 @@ async function findAndQueueUrls() {
             if (urlsToProcess.size > 0) {
                 console.log(`   -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Encolando...`);
 
-                // ¡CORRECCIÓN! Enviar directamente a la cola, sin especificar destination
-                const messages = Array.from(urlsToProcess).map(url => ({
+                                const messages = Array.from(urlsToProcess).map(url => ({
                     body: JSON.stringify({ url, artistName: artist.name }),
                 }));
 
-                await qstashClient.queue('duende-finder-urls').batch(messages);
+                await qstashClient.publishJSON({
+                    topic: 'duende-finder-urls',
+                    messages: messages,
+                });
                 urlsEnqueued += messages.length;
             }
 
