@@ -2,8 +2,6 @@
 // Misión: Encontrar URLs de posibles eventos y enviarlas a una cola de QStash.
 
 require('dotenv').config();
-// Aquí lees la variable de entorno
-const CONSUMER_ENDPOINT_URL = process.env.CONSUMER_ENDPOINT_URL || 'https://duende-ojeador-worker.vercel.app/api/process-urls.js';
 
 const { MongoClient } = require('mongodb');
 const { google } = require('googleapis');
@@ -16,40 +14,12 @@ const artistsCollectionName = 'artists';
 
 const googleApiKey = process.env.GOOGLE_API_KEY;
 const customSearchEngineId = process.env.GOOGLE_CX;
+const BATCH_SIZE = 10;
 
 // --- Inicialización de Servicios ---
-// /api/orchestrator.js - PRODUCTOR
-
-// --- Configuración ---
-// ... (tus otras configuraciones)
 const qstashClient = new Client({ token: process.env.QSTASH_TOKEN });
-
-// --- ¡NUEVO! Define el destino explícitamente ---
-
-
-// ... (el resto de tu código hasta el bucle)
-
-// Dentro de tu bucle `for (const artist of artistsToSearch)`
-if (urlsToProcess.size > 0) {
-    console.log(`  -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Publicando...`);
-
-    // Publicamos las URLs directamente al endpoint consumidor
-    const messages = Array.from(urlsToProcess).map(url => ({
-        // ANTES: queue: 'duende-finder-urls',
-        url: CONSUMER_ENDPOINT_URL, // <-- ¡CAMBIO CLAVE AQUÍ!
-        body: JSON.stringify({ url, artistName: artist.name }),
-    }));
-
-    // Usamos el nuevo método batch que es más eficiente
-    await qstashClient.batch(messages);
-
-    urlsEnqueued += messages.length;
-}
-
-// ... (el resto del código sigue igual)
-
-// --- AJUSTE DE CLAVE: Lote más grande porque la tarea es más ligera ---
-const BATCH_SIZE = 10;
+// ¡CORRECCIÓN! Inicializar el cliente de customsearch
+const customsearch = google.customsearch('v1');
 
 // --- Lógica de búsqueda en cascada y por categorías ---
 const searchQueries = (artistName) => ({
@@ -117,14 +87,13 @@ async function findAndQueueUrls() {
             if (urlsToProcess.size > 0) {
                 console.log(`   -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Encolando...`);
 
-                // Publicamos las URLs encontradas en el topic de QStash
+                // ¡CORRECCIÓN! Usar qstashClient.batch para eficiencia
                 const messages = Array.from(urlsToProcess).map(url => ({
-                    queue: 'duende-finder-urls',
+                    topic: 'duende-finder-urls',
                     body: JSON.stringify({ url, artistName: artist.name }),
                 }));
 
-                const publishPromises = messages.map(message => qstashClient.publish(message));
-                await Promise.all(publishPromises);
+                await qstashClient.batch(messages);
                 urlsEnqueued += messages.length;
             }
 
@@ -139,6 +108,8 @@ async function findAndQueueUrls() {
 
     } catch (error) {
         console.error('💥 Error fatal en el Orquestador-Productor:', error);
+        // Re-lanzar el error para que el endpoint de Vercel pueda capturarlo
+        throw error;
     } finally {
         await client.close();
         console.log('🔚 Conexión con MongoDB cerrada.');
