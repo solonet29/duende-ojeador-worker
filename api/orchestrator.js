@@ -65,7 +65,7 @@ const searchQueries = (artistName) => ({
     ]
 });
 
-// --- Flujo Principal del Orquestador  o (Productor) ---
+// --- Flujo de Principal del Orquestador  o (Productor) ---
 async function findAndQueueUrls() {
     console.log('🚀 Orquestador-Productor iniciado. Buscando artistas para encolar...');
     const client = new MongoClient(mongoUri);
