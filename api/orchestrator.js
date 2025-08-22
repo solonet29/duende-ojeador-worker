@@ -86,12 +86,12 @@ async function findAndQueueUrls() {
             if (urlsToProcess.size > 0) {
                 console.log(`   -> Encontradas ${urlsToProcess.size} URLs únicas para ${artist.name}. Encolando...`);
 
-                                const messages = Array.from(urlsToProcess).map(url => ({
+                const messages = Array.from(urlsToProcess).map(url => ({
                     body: JSON.stringify({ url, artistName: artist.name }),
                 }));
 
                 await qstashClient.publishJSON({
-                    topic: 'duende-finder-urls',
+                    queue: 'duende-finder-urls',
                     messages: messages,
                 });
                 urlsEnqueued += messages.length;
