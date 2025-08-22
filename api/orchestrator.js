@@ -91,7 +91,7 @@ async function findAndQueueUrls() {
                 }));
 
                 await qstashClient.publishJSON({
-                    queue: 'duende-finder-urls',
+                    url: `${process.env.VERCEL_URL}/api/process-url`,
                     messages: messages,
                 });
                 urlsEnqueued += messages.length;
